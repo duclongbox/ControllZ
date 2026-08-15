@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No per-job path filtering: GitHub Actions only supports `paths` at the workflow
+# level, and splitting into four workflows would complicate branch-protection
+# required checks. What actually keeps the expensive job cheap is the cached
+# FetchContent `_deps` directory in desktop-host below.
+jobs:
+  web-client:
+    name: web-client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-client/package-lock.json
+      - name: Install
+        working-directory: web-client
+        run: npm ci
+      - name: Lint
+        working-directory: web-client
+        run: npm run lint
+      - name: Unit tests
+        working-directory: web-client
+        run: npm run test
+      - name: Build
+        working-directory: web-client
+        run: npm run build
+
+  signaling-server:
+    name: signaling-server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: maven
+      # verify runs spotless:check (lint) + tests + package in one command.
+      - name: Verify
+        working-directory: signaling-server
+        run: ./mvnw --batch-mode verify
+
+  desktop-host:
+    name: desktop-host
+    # Must be macOS: ScreenCaptureKit does not exist on Linux. macos-latest is
+    # Apple Silicon, matching the dev machine.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: brew install ninja pkg-config openssl@3
+      # A cold libdatachannel clone + build is minutes per run, and it's the
+      # same pinned tag every time.
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: desktop-host/build/release/_deps
+          key: ${{ runner.os }}-deps-${{ hashFiles('desktop-host/cmake/Dependencies.cmake') }}
+      - name: Configure
+        working-directory: desktop-host
+        run: cmake --preset release
+      - name: Build
+        working-directory: desktop-host
+        run: cmake --build --preset release
+      - name: Test
+        working-directory: desktop-host
+        run: ctest --preset release

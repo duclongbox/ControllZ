@@ -1,0 +1,14 @@
+# Normalize line endings on checkin; check out with LF everywhere.
+* text=auto eol=lf
+
+# Maven wrapper scripts
+mvnw text eol=lf
+mvnw.cmd text eol=crlf
+
+# Binary assets — never touch these
+*.png binary
+*.jpg binary
+*.ico binary
+*.jar binary
+*.mp4 binary
+*.h264 binary

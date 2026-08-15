@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+cmake-build-*/
+
+# web-client
+node_modules/
+dist/
+playwright-report/
+test-results/
+*.local
+
+# signaling-server
+target/
+
+# desktop-host
+build/
+
+# Claude Code local overrides (settings.json is shared, .local.json is not)
+.claude/settings.local.json

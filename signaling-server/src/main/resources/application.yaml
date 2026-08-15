@@ -1,0 +1,21 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: signaling-server
+
+# Actuator: only the health endpoint is exposed. The hosting platform's health
+# check uses it; nothing else needs to be public.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    com.remotehost.signaling: DEBUG

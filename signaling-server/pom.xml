@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+    <!-- lookup parent from repository -->
+  </parent>
+  <groupId>com.remotehost</groupId>
+  <artifactId>signaling-server</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <name>signaling-server</name>
+  <description>WebSocket signaling and session brokering for RemoteHost</description>
+
+  <properties>
+    <java.version>25</java.version>
+    <spotless.version>2.44.5</spotless.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+
+      <!--
+        Lint. `./mvnw verify` must cover CLAUDE.md's lint/test/build contract in
+        one command, so spotless:check is bound to the verify phase. Run
+        `./mvnw spotless:apply` locally to fix formatting.
+
+        Formatter choice is forced by JDK 25: both palantir-java-format and
+        google-java-format reach into javac internals, and JDK 25 changed
+        Log$DeferredDiagnosticHandler.getDiagnostics() out from under them
+        (palantir 2.68.0 dies with NoSuchMethodError). The Eclipse JDT formatter
+        is pure Java, so it is JDK-version-proof, and its 4-space indent matches
+        .editorconfig. Revisit if palantir ships JDK 25 support.
+      -->
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <version>${spotless.version}</version>
+        <configuration>
+          <java>
+            <!--
+              No version pin: Spotless expects an Eclipse release-train version
+              (4.x), not a JDT artifact version, and its bundled default is the
+              one guaranteed compatible with this Spotless release.
+            -->
+            <eclipse>
+              <file>${project.basedir}/eclipse-formatter.properties</file>
+            </eclipse>
+            <!-- Default engine is google-java-format, i.e. javac internals again. -->
+            <removeUnusedImports>
+              <engine>cleanthat-javaparser-unnecessaryimport</engine>
+            </removeUnusedImports>
+            <importOrder>
+              <order>java,javax,org,com,</order>
+            </importOrder>
+            <trimTrailingWhitespace/>
+            <endWithNewline/>
+          </java>
+          <pom>
+            <sortPom>
+              <expandEmptyElements>false</expandEmptyElements>
+            </sortPom>
+          </pom>
+        </configuration>
+        <executions>
+          <execution>
+            <id>spotless-check</id>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <phase>verify</phase>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>
