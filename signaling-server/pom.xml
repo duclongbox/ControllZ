@@ -39,6 +39,15 @@
       <artifactId>spring-boot-starter-websocket-test</artifactId>
       <scope>test</scope>
     </dependency>
+    <!--
+      TestRestTemplate needs Boot's RestTemplateBuilder, which Boot 4 split into its own module
+      and does not pull in transitively. Test scope only: nothing in main uses RestTemplate.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-restclient</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

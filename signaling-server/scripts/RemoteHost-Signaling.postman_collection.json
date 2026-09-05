@@ -1,0 +1,481 @@
+{
+  "info": {
+    "_postman_id": "7b1f4c92-3a5e-4d18-9c62-0e8a5d4f1b30",
+    "name": "RemoteHost — signaling-server",
+    "description": "REST surface of signaling-server, with tests that assert the behaviour that matters.\n\n## Run it\n\n1. `cd signaling-server && ./mvnw spring-boot:run`\n2. Hit **Run collection**. Folders 1–3 pass on their own against a fresh server.\n3. Folder 4 is the WebSocket flow — Postman cannot carry WebSocket requests inside an exported collection, so it is written out as copy-paste steps in that folder's description. Do it by hand in two WebSocket tabs.\n4. Folder 5 is the pairing management that only becomes meaningful once folder 4 has produced a pairing. Set `pairingId` first.\n\n## What it is really testing\n\nThe server stores only a salted SHA-256 of each device credential, and no endpoint ever returns it — so the hashing is verified by behaviour: the same credential keeps working, a tampered one is refused, and an unknown device is refused with a **byte-identical** response. That last assertion is the important one; if those two responses ever differ, the endpoint becomes an oracle for enumerating which deviceIds exist.\n\n## Note\n\nThe server keeps everything in memory. Restarting it wipes every device and pairing, and re-running this collection enrolls new throwaway devices rather than reusing the old ones.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "desktopId", "value": "" },
+    { "key": "desktopCred", "value": "" },
+    { "key": "phoneId", "value": "" },
+    { "key": "phoneCred", "value": "" },
+    { "key": "outsiderId", "value": "" },
+    { "key": "outsiderCred", "value": "" },
+    { "key": "pairingId", "value": "" },
+    { "key": "unauthorizedBody", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1 · Enrollment",
+      "description": "Registration is unauthenticated on purpose — and grants nothing. A registered device can do nothing at all until it is paired.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/actuator/health", "host": ["{{baseUrl}}"], "path": ["actuator", "health"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('status is UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register desktop",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceType\": \"desktop\",\n  \"displayName\": \"My Mac\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/devices", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices"] },
+            "description": "The response carries the ONLY copy of the credential that will ever exist. The server keeps a salted hash; a device that loses this must re-enroll and re-pair."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('desktopId', body.deviceId);",
+                  "pm.collectionVariables.set('desktopCred', body.credential);",
+                  "pm.test('returns a deviceId', () => pm.expect(body.deviceId).to.be.a('string'));",
+                  "pm.test('credential is 256 bits of base64url (43 chars)', () => pm.expect(body.credential).to.have.lengthOf(43));",
+                  "pm.test('deviceType is echoed back', () => pm.expect(body.deviceType).to.eql('desktop'));",
+                  "console.log('DESKTOP token for the WebSocket tab -> ' + body.deviceId + ':' + body.credential);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register phone",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceType\": \"phone\",\n  \"displayName\": \"My Pixel\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/devices", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('phoneId', body.deviceId);",
+                  "pm.collectionVariables.set('phoneCred', body.credential);",
+                  "pm.test('the two devices get different credentials', () => pm.expect(body.credential).to.not.eql(pm.collectionVariables.get('desktopCred')));",
+                  "console.log('PHONE token for the WebSocket tab -> ' + body.deviceId + ':' + body.credential);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a third, unrelated phone",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceType\": \"phone\",\n  \"displayName\": \"Someone Else\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/devices", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices"] },
+            "description": "Used later to prove a non-participant cannot revoke somebody else's pairing."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('outsiderId', body.deviceId);",
+                  "pm.collectionVariables.set('outsiderCred', body.credential);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register without a deviceType → 400",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"no type\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/devices", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('uses the shared {code, message} error shape', () => pm.expect(pm.response.json().code).to.eql('malformedMessage'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 · Credential verification",
+      "description": "The stored hash is never exposed by any endpoint, so it is tested by behaviour. The last two requests here are the ones worth watching: a wrong secret and an unknown device must produce identical responses.",
+      "item": [
+        {
+          "name": "GET /devices/me — correct credential",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{desktopId}}:{{desktopCred}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/devices/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('identifies the calling device', () => pm.expect(pm.response.json().deviceId).to.eql(pm.collectionVariables.get('desktopId')));",
+                  "pm.test('never leaks the stored hash', () => {",
+                  "  pm.expect(pm.response.text()).to.not.include('credentialHash');",
+                  "  pm.expect(pm.response.text()).to.not.include('credential');",
+                  "});",
+                  "pm.test('reports whether a socket is currently open', () => pm.expect(pm.response.json().online).to.be.a('boolean'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /devices/me — tampered credential → 401",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{desktopId}}:{{desktopCred}}TAMPERED" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/devices/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('challenges with WWW-Authenticate', () => pm.expect(pm.response.headers.get('WWW-Authenticate')).to.eql('Bearer'));",
+                  "pm.test('code is invalidCredential', () => pm.expect(pm.response.json().code).to.eql('invalidCredential'));",
+                  "pm.collectionVariables.set('unauthorizedBody', pm.response.text());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /devices/me — unknown deviceId → identical 401",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer 11111111-2222-3333-4444-555555555555:{{desktopCred}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/devices/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices", "me"] },
+            "description": "Run this straight after the tampered-credential request. The two responses must be byte-identical: if they ever diverge, this endpoint becomes an oracle for discovering which deviceIds exist."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('byte-identical to the wrong-secret response — no deviceId oracle', () => {",
+                  "  pm.expect(pm.response.text()).to.eql(pm.collectionVariables.get('unauthorizedBody'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /devices/me — no Authorization header → 401",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/devices/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('says what the header should look like', () => pm.expect(pm.response.json().message).to.include('Bearer'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /devices/me — malformed header → 401",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer not-a-uuid:whatever" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/devices/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 · Device self-service",
+      "description": "Everything is scoped to \"me\", the device presenting the credentials. There is no user or account entity in this system, and deliberately no endpoint that lists every device on the server.",
+      "item": [
+        {
+          "name": "PATCH /devices/me — rename",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{desktopId}}:{{desktopCred}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"Renamed Mac\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/devices/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "devices", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('the new name sticks', () => pm.expect(pm.response.json().displayName).to.eql('Renamed Mac'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /devices/me/pairings",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{desktopId}}:{{desktopCred}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/me/pairings",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "devices", "me", "pairings"]
+            },
+            "description": "Empty until the WebSocket pairing flow in folder 4 has run. Afterwards each entry carries the peer's id, name, and whether its socket is open right now."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('count matches the array length', () => pm.expect(body.count).to.eql(body.devices.length));",
+                  "if (body.count > 0) { pm.collectionVariables.set('pairingId', body.devices[0].pairingId); console.log('pairingId -> ' + body.devices[0].pairingId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /sessions/me",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{phoneId}}:{{phoneCred}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/sessions/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "sessions", "me"] },
+            "description": "The caller's own session, if it has one — not a server-wide list. Shows one entry only while a session opened in folder 4 is live."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('a device is in at most one session', () => pm.expect(pm.response.json().count).to.be.below(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /stats",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/stats", "host": ["{{baseUrl}}"], "path": ["api", "v1", "stats"] },
+            "description": "Aggregate counters only, no device ids, so it needs no auth. Note `pairings` counts revoked ones too — revocation sets a timestamp rather than deleting the row, to stay auditable. Check /devices/me/pairings for the active set."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK without credentials', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('counts the devices enrolled so far', () => pm.expect(body.devices).to.be.at.least(3));",
+                  "pm.test('aggregate numbers only — no device ids', () => {",
+                  "  pm.expect(Object.keys(body).sort()).to.eql(['activeSessions', 'devices', 'onlineDevices', 'outstandingPairCodes', 'pairings']);",
+                  "  Object.values(body).forEach((v) => pm.expect(v).to.be.a('number'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 · WebSocket flow — build these two tabs by hand",
+      "description": "Postman cannot carry WebSocket requests inside an exported collection file, so this folder is instructions rather than requests. Pairing and session setup are WebSocket-only; REST cannot do them.\n\n**New → WebSocket Request → `ws://localhost:8080/ws` → Connect.** Open two tabs, *desktop* and *phone*. Take the two tokens from the Postman console after running folder 1 (they are logged as `DESKTOP token …` / `PHONE token …`). Send raw JSON.\n\n| # | Tab | Send | Expect |\n|---|---|---|---|\n| 1 | desktop | `{\"type\":\"pairCodeRequest\"}` | `error` / `notAuthenticated` — nothing works before auth |\n| 2 | desktop | `{\"type\":\"authenticate\",\"deviceId\":\"<desktopId>\",\"credential\":\"<desktopCred>\"}` | `authenticated` |\n| 3 | phone | same, with the phone's pair | `authenticated` |\n| 4 | desktop | `{\"type\":\"pairCodeRequest\"}` | `pairCodeIssued` with a 6-digit `code` and `expiresAt` |\n| 5 | phone | `{\"type\":\"pairCodeSubmit\",\"code\":\"<code>\"}` | **both tabs** get `pairedConfirmed` — copy `pairingId` into the collection variable |\n| 6 | phone | `{\"type\":\"connectRequest\",\"targetDeviceId\":\"<desktopId>\"}` | desktop gets `sessionStarted` with `\"role\":\"desktop\"` first (it is the offerer), phone gets the same `sessionId` with `\"role\":\"phone\"` |\n| 7 | desktop | `{\"type\":\"sdpOffer\",\"sessionId\":\"<sid>\",\"sdp\":\"v=0 FAKE OFFER\"}` | phone receives it byte-for-byte |\n| 8 | phone | `{\"type\":\"sdpAnswer\",\"sessionId\":\"<sid>\",\"sdp\":\"v=0 FAKE ANSWER\"}` | desktop receives it |\n| 9 | phone | `{\"type\":\"iceCandidate\",\"sessionId\":\"<sid>\",\"candidate\":\"candidate:1 1 udp\",\"sdpMid\":\"0\",\"sdpMLineIndex\":0}` | desktop receives it |\n| 10 | desktop | close the tab | phone gets `peerDisconnected` |\n\nThe SDP strings are deliberately garbage — the server never parses them, so fake values are enough to prove the relay works.\n\n**Negative cases worth sending:**\n\n- `{\"type\":\"echo\",\"payload\":\"ping\"}` on a fresh socket → echoed back with no auth at all.\n- `{\"type\":\"pairCodeSubmit\",\"code\":\"000000\"}` → `invalidPairCode`, the same error you get for an expired or already-used code.\n- desktop sending `pairCodeSubmit`, or phone sending `pairCodeRequest` → `wrongDeviceType`.\n- `connectRequest` at a random UUID → `connectRejected` / `notPaired`.\n- any relay with a made-up `sessionId` → `unknownSession`.\n- a second `connectRequest` while a session is live → `connectRejected` / `alreadyInSession`.\n- eleven wrong `pairCodeSubmit`s in a row → `rateLimited` on the 11th. The limiter is keyed on source IP, so both of your tabs share one budget, and it stays spent for 5 minutes.\n\n**Gotcha:** registering over REST does not authenticate a socket. Every tab must send `authenticate` itself. And re-authenticating the same device on a second socket closes the first one — one connection per device, by design.",
+      "item": []
+    },
+    {
+      "name": "5 · Pairing management — after folder 4",
+      "description": "Set the `pairingId` variable first (folder 3's pairings request captures it automatically once a pairing exists).",
+      "item": [
+        {
+          "name": "DELETE /pairings/{id} — as a non-participant → 404",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{outsiderId}}:{{outsiderCred}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/pairings/{{pairingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "pairings", "{{pairingId}}"]
+            },
+            "description": "404 rather than 403 on purpose: a 403 would confirm the pairing exists."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found — a guessed pairingId reveals nothing', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /pairings/{id} — as a participant → 204",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{phoneId}}:{{phoneCred}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/pairings/{{pairingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "pairings", "{{pairingId}}"]
+            },
+            "description": "Also tears down any live session between the two devices — both WebSocket tabs receive `peerDisconnected`. Otherwise \"revoke\" would leave the current stream running, which is the opposite of what the word means."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "pm.test('no body', () => pm.expect(pm.response.text()).to.be.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /pairings/{id} — again → 404",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{phoneId}}:{{phoneCred}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/pairings/{{pairingId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "pairings", "{{pairingId}}"]
+            },
+            "description": "After this, the phone's `connectRequest` to that desktop returns `connectRejected` / `notPaired` — the same rejection as for a device it was never paired with."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 Not Found — revocation is not repeatable', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
