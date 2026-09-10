@@ -1,0 +1,132 @@
+.cover {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: var(--color-bg-base);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+  padding:
+    calc(env(safe-area-inset-top) + var(--space-2xl))
+    calc(env(safe-area-inset-right) + var(--space-xl))
+    calc(env(safe-area-inset-bottom) + var(--space-2xl))
+    calc(env(safe-area-inset-left) + var(--space-xl));
+  text-align: center;
+}
+
+.rotate {
+  background: var(--color-bg-stage);
+}
+
+.phone {
+  width: 96px;
+  height: 64px;
+  border-radius: 12px;
+  border: 2px solid var(--color-bg-accent);
+  position: relative;
+  flex: none;
+}
+
+.rotateIcon {
+  position: absolute;
+  right: -34px;
+  top: 14px;
+  color: var(--color-bg-accent);
+}
+
+.title {
+  font-size: var(--type-size-lg);
+  font-weight: 600;
+  line-height: 26px;
+  color: var(--color-text-primary);
+}
+
+.body {
+  font-size: var(--type-size-base);
+  line-height: 22px;
+  color: var(--color-text-secondary);
+  max-width: 320px;
+}
+
+/* ---- install sheet ---- */
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  background: rgb(0 0 0 / 0.72);
+}
+
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 31;
+  background: var(--color-bg-surface);
+  border-top-left-radius: var(--radius-xl);
+  border-top-right-radius: var(--radius-xl);
+  border-top: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-sheet);
+  padding:
+    var(--space-lg)
+    calc(env(safe-area-inset-right) + var(--space-lg))
+    calc(env(safe-area-inset-bottom) + var(--space-xl))
+    calc(env(safe-area-inset-left) + var(--space-lg));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.grabber {
+  width: 40px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-default);
+  align-self: center;
+  flex: none;
+}
+
+.sheetHead {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.appIcon {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-accent);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+
+.sheetText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.sheetTitle {
+  font-size: var(--type-size-md);
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--color-text-primary);
+}
+
+.sheetBody {
+  font-size: var(--type-size-sm);
+  line-height: 19px;
+  color: var(--color-text-secondary);
+}
+
+.sheetActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}

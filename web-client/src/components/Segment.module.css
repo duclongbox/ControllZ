@@ -1,0 +1,33 @@
+.track {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  border-radius: 12px;
+  background: var(--color-bg-inset);
+}
+
+.floating {
+  background: rgb(0 0 0 / 0.62);
+  backdrop-filter: blur(14px);
+}
+
+.segment {
+  flex: 1;
+  min-width: 96px;
+  height: 40px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--type-size-sm);
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.selected {
+  background: var(--color-bg-raised);
+  color: var(--color-text-primary);
+}

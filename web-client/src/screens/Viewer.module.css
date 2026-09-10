@@ -1,0 +1,17 @@
+/* The viewer root.
+ *
+ * Note what is NOT here: padding. The stage fills this element edge to edge and
+ * the chrome floats above it with its own safe-area insets. Padding here would
+ * shrink the video for a notch, which is exactly the bug the design forbids. */
+.viewer {
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-stage);
+  overflow: hidden;
+}
+
+.chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/catalog.json",
+  "title": "Message catalog",
+  "description": "Every signaling message type in use, and which way it travels. Matches the sealed SignalingMessage hierarchy in signaling-server; a type here with no schema file, or vice versa, is a bug.",
+  "messages": [
+    { "type": "register",         "direction": "clientToServer", "schema": "register.schema.json",         "auth": "none" },
+    { "type": "authenticate",     "direction": "clientToServer", "schema": "authenticate.schema.json",     "auth": "none" },
+    { "type": "pairCodeRequest",  "direction": "clientToServer", "schema": "pairCodeRequest.schema.json",  "auth": "desktop" },
+    { "type": "pairCodeSubmit",   "direction": "clientToServer", "schema": "pairCodeSubmit.schema.json",   "auth": "phone" },
+    { "type": "connectRequest",   "direction": "clientToServer", "schema": "connectRequest.schema.json",   "auth": "phone" },
+    { "type": "endSession",       "direction": "clientToServer", "schema": "endSession.schema.json",       "auth": "device" },
+    { "type": "heartbeat",        "direction": "clientToServer", "schema": "heartbeat.schema.json",        "auth": "device" },
+
+    { "type": "registered",       "direction": "serverToClient", "schema": "registered.schema.json" },
+    { "type": "authenticated",    "direction": "serverToClient", "schema": "authenticated.schema.json" },
+    { "type": "pairCodeIssued",   "direction": "serverToClient", "schema": "pairCodeIssued.schema.json" },
+    { "type": "pairedConfirmed",  "direction": "serverToClient", "schema": "pairedConfirmed.schema.json" },
+    { "type": "connectRejected",  "direction": "serverToClient", "schema": "connectRejected.schema.json" },
+    { "type": "sessionStarted",   "direction": "serverToClient", "schema": "sessionStarted.schema.json" },
+    { "type": "peerDisconnected", "direction": "serverToClient", "schema": "peerDisconnected.schema.json" },
+    { "type": "heartbeatAck",     "direction": "serverToClient", "schema": "heartbeatAck.schema.json" },
+    { "type": "error",            "direction": "serverToClient", "schema": "error.schema.json" },
+
+    { "type": "sdpOffer",         "direction": "relayed",        "schema": "sdpOffer.schema.json",     "auth": "device" },
+    { "type": "sdpAnswer",        "direction": "relayed",        "schema": "sdpAnswer.schema.json",    "auth": "device" },
+    { "type": "iceCandidate",     "direction": "relayed",        "schema": "iceCandidate.schema.json", "auth": "device" },
+    { "type": "echo",             "direction": "both",           "schema": "echo.schema.json",         "auth": "none" }
+  ],
+  "shared": [
+    { "name": "envelope",   "schema": "envelope.schema.json" },
+    { "name": "deviceType", "schema": "deviceType.schema.json" },
+    { "name": "errorCode",  "schema": "errorCode.schema.json" }
+  ]
+}

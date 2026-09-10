@@ -1,0 +1,72 @@
+.group {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  flex: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-height: 56px;
+  padding: var(--space-md) var(--space-base);
+  background: var(--color-bg-surface);
+  text-align: left;
+}
+
+.row + .row {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+button.row:active {
+  background: var(--color-bg-raised);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--type-size-base);
+  line-height: 20px;
+  color: var(--color-text-primary);
+}
+
+.danger .label {
+  color: var(--color-text-danger);
+}
+
+.sub {
+  font-size: var(--type-size-xs);
+  line-height: 16px;
+  color: var(--color-text-tertiary);
+}
+
+.trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: none;
+  color: var(--color-text-disabled);
+}
+
+.value {
+  font-size: var(--type-size-sm);
+  line-height: 20px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.selected {
+  border-color: var(--color-border-accent);
+}
+
+.check {
+  color: var(--color-bg-accent);
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/endSession.schema.json",
+  "title": "EndSession",
+  "description": "Client -> server. Either peer tears the session down deliberately. The other side receives `peerDisconnected`. A dropped socket has the same effect without this message.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "sessionId"],
+  "properties": {
+    "type": {
+      "const": "endSession"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

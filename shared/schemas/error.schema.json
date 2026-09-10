@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/error.schema.json",
+  "title": "ErrorMessage",
+  "description": "Server -> client. A protocol-level fault: unparseable, unsupported, unauthenticated, or otherwise unhandleable. Never fatal to the connection on its own -- one bad message must not take a peer down. Expected refusals of well-formed requests use `connectRejected` instead.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "code", "message"],
+  "properties": {
+    "type": {
+      "const": "error"
+    },
+    "code": {
+      "$ref": "errorCode.schema.json"
+    },
+    "message": {
+      "type": "string",
+      "description": "Human-readable detail. Deliberately vague where precision would leak which deviceIds or codes exist; branch on `code`, never on this."
+    }
+  }
+}

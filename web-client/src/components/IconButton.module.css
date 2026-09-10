@@ -1,0 +1,52 @@
+/* The viewer's overlay control. Sits on a scrim so it stays legible over any
+ * frame content without blocking it. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--size-control-lg);
+  height: var(--size-control-lg);
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(12px);
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.sm {
+  width: var(--size-control-md);
+  height: var(--size-control-md);
+}
+
+.ghost {
+  background: var(--scrim-control);
+  color: var(--color-text-primary);
+}
+.ghost:active:not(:disabled) {
+  background: var(--color-bg-raised);
+}
+
+.active {
+  background: var(--color-bg-raised);
+  color: var(--color-text-accent);
+}
+
+.filled {
+  background: var(--color-bg-accent);
+  color: var(--color-text-on-accent);
+}
+.filled:active:not(:disabled) {
+  background: var(--color-bg-accent-pressed);
+}
+
+.danger {
+  background: var(--color-bg-danger);
+  color: var(--color-text-on-accent);
+}
+.danger:active:not(:disabled) {
+  background: var(--color-bg-danger-pressed);
+}
+
+.button:disabled {
+  background: rgb(0 0 0 / 0.3);
+  color: var(--color-text-disabled);
+}

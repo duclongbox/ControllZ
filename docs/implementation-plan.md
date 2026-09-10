@@ -22,15 +22,64 @@ deliverables, acceptance criteria, and explicitly deferred items.
   (encoder tuning, pacing, adaptive bitrate) rather than *money* on infra.
   Smoothness is almost entirely determined by the desktop-host encode path
   and the ABR loop — not by backend capacity — so this trade-off is cheap.
-- **First desktop platform: macOS** (ScreenCaptureKit → VideoToolbox),
-  since that's the dev machine. Windows (DXGI Desktop Duplication →
-  NVENC/AMF/QSV) is structured for from day one (capture/encode behind an
-  interface) but implemented later. **← assumption, confirm.**
+- **Product scope: full remote control of Windows and macOS desktops** —
+  screen, mouse and keyboard, driven from a phone browser. Both platforms
+  are first-class targets, not a primary plus an eventual port.
+- **Access model: attended only** *(decided)*. The host is an application
+  the logged-in user launches; it is **not** a service or daemon. This
+  deliberately excludes unattended boot-time access, the Windows login
+  screen and UAC secure desktop, and the macOS `loginwindow` session.
+  Rationale: those need a service + per-session-agent split on Windows and
+  MDM-deployed TCC profiles on macOS — months of platform plumbing that
+  buys nothing until the core experience is good. It is, however, the kind
+  of thing that is expensive to retrofit, so keep `core/` free of any
+  assumption that it shares a process with capture.
+- **Platform abstraction is structural, not deferred** — capture, encode
+  and input injection sit behind interfaces from M0, and `core/`
+  (transport, signaling, session, rate control) holds no
+  platform-conditional code. See §2.9.
 - Phone targets: Android Chrome and iOS Safari, as PWA/browser.
 
 ---
 
 
+
+### 2.9 Platform targets: Windows + macOS, attended — structural from M0
+
+Both platforms ship. What matters is which layers are portable:
+
+| Layer | Portable | macOS | Windows |
+|---|---|---|---|
+| Capture | no | ScreenCaptureKit → `CVPixelBuffer`/IOSurface | Windows Graphics Capture → `ID3D11Texture2D` |
+| Encode | no | VideoToolbox | Media Foundation H.264 MFT (D3D11 texture in) |
+| Input injection | no | `CGEvent` (needs Accessibility grant) | `SendInput` |
+| Transport, signaling, session, rate control | **yes** | shared `core/` | shared `core/` |
+
+Use **Windows Graphics Capture, not DXGI Desktop Duplication** (the
+system-design draft names the latter). Desktop Duplication is
+full-screen-only and awkward on hybrid-GPU laptops; WGC does per-monitor
+and per-window capture and is the supported API on Win10 1903+.
+
+Windows encoder: start with the **Media Foundation H.264 MFT**, which takes
+D3D11 textures directly (holding the GPU-resident invariant) and abstracts
+over NVIDIA/AMD/Intel. Flagged risk: MF exposes the rate-control knobs this
+design depends on — forced IDR on PLI, hard data-rate cap, B-frames off —
+less consistently across drivers than the vendor SDKs do. Drop to NVENC
+directly only if measurement shows MF can't hold them.
+
+Permissions are the asymmetry, and it runs opposite to expectation:
+attended capture and input on Windows need no special grant, while macOS
+requires the user to grant **Screen Recording** and **Accessibility** per
+signed binary in System Settings. Ad-hoc signing with a stable identifier
+(already in `desktop-host/CMakeLists.txt`) preserves the grant across
+rebuilds in development; shipping needs Developer ID signing + notarization.
+
+`[OPEN QUESTION]` Multi-monitor: one display at a time with a switcher, or
+a stitched virtual surface? Recommendation: one at a time — a stitched
+surface spends bitrate on pixels a phone screen can't show and complicates
+the M2 coordinate mapping.
+
+---
 
 ## 3. Milestone plans
 
@@ -50,7 +99,10 @@ Deliverables:
   and VideoToolbox are Objective-C), one `main.cpp` that prints a version;
   ctest with one trivial test; `libdatachannel` v0.24.5 added via
   FetchContent and *linked* — proving the build works is part of
-  scaffolding, since it's the riskiest dependency.
+  scaffolding, since it's the riskiest dependency. Apple frameworks must
+  be linked behind `if(APPLE)` and the capture/encode/input seam headers
+  must exist in `include/desktophost/` from M0 — the current
+  `CMakeLists.txt` links them unconditionally, which is the one M0 gap.
 - `shared/`: `schemas/` dir + README describing the codegen flow (codegen
   itself lands in M1 with the first schema).
 - CI (GitHub Actions): one job per package running its lint/test/build;
@@ -97,6 +149,9 @@ interfaces (capture, encode, transport, signaling):
 - Config: room code via CLI flag. Tests: unit-test the module seams
   (e.g. encoder produces valid Annex-B/AVCC, packetizer output), not the
   GPU pipeline itself.
+- Both backends land behind the capture/encode interfaces. macOS first
+  because it's the dev machine, Windows immediately after against the same
+  seam — not a later port.
 
 **web-client/** — minimal viewer page: enter room code → join → recvonly
 transceiver → `<video>` (muted+playsinline for autoplay). Plus a **stats
@@ -129,8 +184,9 @@ polish (M5), Windows capture backend.
 
 **Goal:** touch the phone screen, cursor moves/clicks on the desktop.
 
-- `shared/`: input schema — `pointerMove/Down/Up`, `scroll`, later
-  `key`. **Normalized coordinates (0–1)** relative to the video frame, so
+- `shared/`: input schema — `pointerMove/Down/Up`, `scroll`, and `keyDown`/`keyUp` carrying **physical key codes plus
+  modifier state**, not characters — a soft keyboard emitting "A" doesn't
+  say which key to synthesize, and layouts differ per OS. **Normalized coordinates (0–1)** relative to the video frame, so
   desktop resolution changes don't break mapping. Include a client
   timestamp + monotonic sequence number (receiver drops stale moves —
   required since the channel reorders).
@@ -139,13 +195,15 @@ polish (M5), Windows capture backend.
   opened with `{ordered: false, maxRetransmits: 0}` — the invariant.
   Coalesce moves to one message per animation frame.
 - `desktop-host/`: receive on the unordered channel, drop
-  out-of-sequence moves, inject via CGEvent (macOS Accessibility
-  permission flow documented). Clicks/ups are must-arrive semantics at
+  out-of-sequence moves, inject through the platform input backend (`CGEvent` on macOS, gated on
+  the Accessibility grant; `SendInput` on Windows). Clicks/ups are must-arrive semantics at
   app level: fine over an unreliable channel in practice, but state-sync
   (periodic absolute cursor state) papers over a lost `pointerUp`.
 - Acceptance: tap accuracy within a few px at any window size;
   drag feels continuous; input adds no measurable video regression.
-- Deferred: keyboard, multi-touch gestures, clipboard.
+- Deferred: multi-touch gestures, clipboard sync, file transfer, audio,
+  and Ctrl+Alt+Del (needs `SendSAS` from a service — out of scope while
+  the host is attended-only).
 
 ---
 
@@ -234,7 +292,8 @@ ones. This is the smoothness milestone.
 
 ## 5. Decisions needing your confirmation
 
-1. macOS as the first desktop-host platform (§1 assumption).
+1. ~~macOS as the first desktop-host platform.~~ **Resolved:** Windows and
+   macOS are both first-class, attended-only. See §1 and §2.9.
 2. Skip Redis/Upstash entirely until horizontal scaling (§2.4) — this
    contradicts system-design.md §4.2's provider recommendation, deliberately.
 3. camelCase + JSON Schema codegen toolchain (§2.6).

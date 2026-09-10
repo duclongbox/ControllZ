@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/deviceType.schema.json",
+  "title": "DeviceType",
+  "description": "Which side of a session a device occupies. A session holds exactly one of each. Also used as the `role` field of `sessionStarted`, which tells each peer which side it is.",
+  "type": "string",
+  "enum": ["desktop", "phone"]
+}

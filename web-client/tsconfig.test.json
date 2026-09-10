@@ -2,7 +2,11 @@
   "extends": "./tsconfig.app.json",
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
-    "types": ["vitest/globals", "@testing-library/jest-dom", "node"],
+    // `types` replaces rather than extends the app project's list, so
+    // "vite/client" must be repeated here: tests import from src/, which pulls
+    // those modules into THIS program, and without it every `*.module.css`
+    // import in a component reachable from a test fails to resolve.
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "node"],
     "allowImportingTsExtensions": true,
     "noEmit": true
   },

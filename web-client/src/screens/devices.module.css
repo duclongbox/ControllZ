@@ -1,0 +1,191 @@
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex: none;
+}
+
+.title {
+  font-size: var(--type-size-2xl);
+  font-weight: 600;
+  line-height: 40px;
+  letter-spacing: -0.015em;
+  color: var(--color-text-primary);
+}
+
+.iconAction {
+  width: var(--size-touch-min);
+  height: var(--size-touch-min);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  flex: none;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex: none;
+}
+
+/* ---- device detail ---- */
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  text-align: center;
+}
+
+.avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: var(--color-bg-inset);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-primary);
+}
+
+.deviceName {
+  font-size: var(--type-size-lg);
+  font-weight: 600;
+  line-height: 26px;
+  color: var(--color-text-primary);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex: none;
+}
+
+.note {
+  font-size: var(--type-size-xs);
+  line-height: 17px;
+  color: var(--color-text-tertiary);
+}
+
+/* ---- connecting ladder ---- */
+.ladder {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+.step {
+  display: flex;
+  gap: 14px;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+}
+
+.marker {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--color-text-disabled);
+  box-sizing: border-box;
+  background: transparent;
+  color: var(--color-bg-stage);
+}
+
+.done .marker {
+  background: var(--color-status-live);
+  border-color: var(--color-status-live);
+}
+
+.active .marker {
+  background: var(--color-bg-accent);
+  border-color: var(--color-bg-accent);
+}
+
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-stage);
+  animation: beat 1.1s var(--ease-out) infinite;
+}
+
+@keyframes beat {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.connector {
+  width: 2px;
+  flex: 1;
+  min-height: 22px;
+  background: var(--color-border-subtle);
+}
+
+.done .connector {
+  background: var(--color-status-live);
+}
+
+.stepText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding-bottom: var(--space-base);
+}
+
+.stepLabel {
+  font-size: var(--type-size-base);
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--color-text-primary);
+}
+
+.pending .stepLabel {
+  color: var(--color-text-disabled);
+}
+
+.stepDetail {
+  font-family: var(--font-mono);
+  font-size: var(--type-size-xs);
+  line-height: 16px;
+  color: var(--color-text-tertiary);
+}
+
+/* ---- session summary ---- */
+.summary {
+  display: flex;
+  gap: 22px;
+  padding: 14px var(--space-lg);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  flex: none;
+}
+
+/* The connecting ladder is often read in landscape, where 390px of height has
+ * to hold six rungs plus a title and a button. Tighten rather than scroll —
+ * a step you have to scroll to is a step you do not see stall. */
+@media (max-height: 520px) {
+  .step { gap: var(--space-md); }
+  .stepText { padding-bottom: var(--space-xs); gap: 0; }
+  .connector { min-height: 4px; }
+  .stepLabel { font-size: var(--type-size-sm); line-height: 17px; }
+  .stepDetail { font-size: var(--type-size-2xs); line-height: 13px; }
+  .marker { width: 16px; height: 16px; border-width: 2px; }
+  .pulse { width: 6px; height: 6px; }
+}

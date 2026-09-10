@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/registered.schema.json",
+  "title": "Registered",
+  "description": "Server -> client. Reply to `register`. The connection is authenticated as this device from here on.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "deviceId", "credential", "deviceType"],
+  "properties": {
+    "type": {
+      "const": "registered"
+    },
+    "deviceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Permanent device handle. A UUID rather than a short code on purpose: it is what a phone sends in `connectRequest`, and short handles would make desktops enumerable."
+    },
+    "credential": {
+      "type": "string",
+      "description": "The device secret, in plaintext, appearing here and nowhere else ever. The server stores only a salted hash, so a device that loses this must re-enroll and re-pair. Persist it in the OS keychain (desktop) or IndexedDB (phone)."
+    },
+    "deviceType": {
+      "$ref": "deviceType.schema.json"
+    }
+  }
+}

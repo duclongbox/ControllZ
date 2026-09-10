@@ -1,10 +1,11 @@
-const VERSION = '0.1.0-m0'
+import { RouterProvider } from 'react-router-dom'
+import { router } from './routes'
+import { SessionProvider } from './session/SessionProvider'
 
 export default function App() {
   return (
-    <main>
-      <h1>RemoteHost</h1>
-      <p>web-client {VERSION}</p>
-    </main>
+    <SessionProvider>
+      <RouterProvider router={router} />
+    </SessionProvider>
   )
 }

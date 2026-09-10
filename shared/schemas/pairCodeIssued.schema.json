@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/pairCodeIssued.schema.json",
+  "title": "PairCodeIssued",
+  "description": "Server -> client. The code for the desktop to show on screen.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "code", "expiresAt"],
+  "properties": {
+    "type": {
+      "const": "pairCodeIssued"
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[0-9]{6}$",
+      "description": "Six digits, zero-padded. Single-use and short-lived; a million-value space is only safe because redemption is attempt-limited per source IP."
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC. Five minutes after issue."
+    }
+  }
+}

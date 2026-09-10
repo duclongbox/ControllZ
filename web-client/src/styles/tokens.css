@@ -1,0 +1,100 @@
+/* Design tokens — the single source of colour, spacing, radius and type.
+ *
+ * These names mirror the Figma variable collections one-for-one, and every
+ * Figma variable carries its var() name as its code syntax, so Dev Mode emits
+ * exactly these identifiers. See docs/ui-spec.md §6.
+ *
+ * Nothing outside this file should contain a raw hex value. */
+
+:root {
+  /* ---- surface ---- */
+  --color-bg-stage: #000000; /* behind the video, always */
+  --color-bg-base: #0b0c0e;
+  --color-bg-surface: #141619;
+  --color-bg-raised: #1c1f24;
+  --color-bg-inset: #262a31;
+  --color-bg-accent: #4c7dff;
+  --color-bg-accent-pressed: #3563e6;
+  --color-bg-danger: #f5484a;
+  --color-bg-danger-pressed: #c93436;
+
+  /* ---- text ---- */
+  --color-text-primary: #f2f4f7;
+  --color-text-secondary: #9aa2ad;
+  --color-text-tertiary: #737b87;
+  --color-text-disabled: #4e555f;
+  --color-text-on-accent: #ffffff;
+  --color-text-accent: #7fa3ff;
+  --color-text-success: #5be0ab;
+  --color-text-warn: #ffc15e;
+  --color-text-danger: #ff7375;
+
+  /* ---- border ---- */
+  --color-border-subtle: #262a31;
+  --color-border-default: #363b44;
+  --color-border-strong: #4e555f;
+  --color-border-accent: #4c7dff;
+
+  /* ---- connection status — the only semantic colour ---- */
+  --color-status-live: #2fcc8b;
+  --color-status-connecting: #4c7dff;
+  --color-status-degraded: #f5a524;
+  --color-status-relayed: #b285f5;
+  --color-status-offline: #4e555f;
+  --color-status-error: #f5484a;
+
+  /* ---- spacing ---- */
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-base: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* ---- radius ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* ---- size — nothing interactive goes below touch-min ---- */
+  --size-touch-min: 44px;
+  --size-control-md: 44px;
+  --size-control-lg: 52px;
+  --size-icon-sm: 16px;
+  --size-icon-md: 20px;
+  --size-icon-lg: 24px;
+
+  /* ---- type ---- */
+  --font-ui: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --type-size-2xs: 11px;
+  --type-size-xs: 12px;
+  --type-size-sm: 13px;
+  --type-size-base: 15px;
+  --type-size-md: 17px;
+  --type-size-lg: 20px;
+  --type-size-xl: 26px;
+  --type-size-2xl: 34px;
+  --type-size-3xl: 44px;
+
+  /* ---- elevation ---- */
+  --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.5);
+  --shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.45);
+  --shadow-sheet: 0 -8px 32px rgb(0 0 0 / 0.55);
+
+  /* ---- scrims: chrome sits on these so it stays legible over any frame ---- */
+  --scrim-control: rgb(0 0 0 / 0.5);
+  --scrim-chrome-top: linear-gradient(to bottom, rgb(0 0 0 / 0.78), rgb(0 0 0 / 0));
+  --scrim-chrome-bottom: linear-gradient(to top, rgb(0 0 0 / 0.78), rgb(0 0 0 / 0));
+
+  /* ---- motion ---- */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+}

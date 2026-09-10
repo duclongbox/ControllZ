@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/pairedConfirmed.schema.json",
+  "title": "PairedConfirmed",
+  "description": "Server -> client. Sent to both sides once the pairing record exists -- to the desktop only if it is still connected. Each side receives the other side's identity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "pairingId", "peerDeviceId", "peerDisplayName"],
+  "properties": {
+    "type": {
+      "const": "pairedConfirmed"
+    },
+    "pairingId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Handle for revoking this pairing via DELETE /api/v1/pairings/{pairingId}."
+    },
+    "peerDeviceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The other device. This is what the phone later sends as `connectRequest.targetDeviceId`."
+    },
+    "peerDisplayName": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,121 @@
+/* Viewer chrome.
+ *
+ * Every rule here is an OVERLAY: absolutely positioned over the stage, on a
+ * gradient scrim, padded by the safe-area insets. Nothing in this file is ever
+ * in the layout flow, so showing or hiding it costs the video nothing. */
+
+.bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-base);
+  pointer-events: auto;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+
+.top {
+  top: 0;
+  justify-content: space-between;
+  background: var(--scrim-chrome-top);
+  padding:
+    calc(env(safe-area-inset-top) + 14px)
+    calc(env(safe-area-inset-right) + var(--space-lg))
+    var(--space-lg)
+    calc(env(safe-area-inset-left) + var(--space-lg));
+}
+
+.bottom {
+  bottom: 0;
+  justify-content: space-between;
+  background: var(--scrim-chrome-bottom);
+  padding:
+    var(--space-lg)
+    calc(env(safe-area-inset-right) + var(--space-lg))
+    calc(env(safe-area-inset-bottom) + var(--space-base))
+    calc(env(safe-area-inset-left) + var(--space-lg));
+}
+
+.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.top.hidden { transform: translateY(-8px); }
+.bottom.hidden { transform: translateY(8px); }
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.name {
+  font-size: var(--type-size-md);
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.rtt {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 7px var(--space-md);
+  border-radius: var(--radius-full);
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(12px);
+  flex: none;
+}
+
+.rttValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-size-base);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--color-text-primary);
+}
+
+.rttWarn { color: var(--color-text-warn); }
+.rttBad { color: var(--color-text-danger); }
+
+.rttUnit {
+  font-size: var(--type-size-2xs);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.controls::-webkit-scrollbar { display: none; }
+
+/* A floating control that sits above the bottom bar. */
+.floating {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.banner {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 70px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(440px, calc(100% - var(--space-2xl)));
+  pointer-events: auto;
+}

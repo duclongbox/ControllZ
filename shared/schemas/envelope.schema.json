@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/envelope.schema.json",
+  "title": "Envelope",
+  "description": "Every signaling message is a JSON object whose `type` field discriminates the payload. Fields are camelCase so TypeScript and Java/Jackson both map them without remapping annotations. Timestamps are ISO-8601 UTC strings and ids are canonical UUID strings.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "Message type; see catalog.json for the full set."
+    }
+  }
+}

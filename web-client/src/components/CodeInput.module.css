@@ -1,0 +1,64 @@
+.wrap {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.cell {
+  flex: 1;
+  height: 68px;
+  border-radius: 12px;
+  background: var(--color-bg-inset);
+  border: 1px solid var(--color-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-size-lg);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.filled {
+  border-color: var(--color-border-default);
+}
+
+.focused {
+  border-width: 2px;
+  border-color: var(--color-border-accent);
+}
+
+.error {
+  border-width: 2px;
+  border-color: var(--color-status-error);
+  color: var(--color-text-danger);
+}
+
+.caret {
+  width: 2px;
+  height: 26px;
+  border-radius: 1px;
+  background: var(--color-bg-accent);
+  animation: blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to { visibility: hidden; }
+}
+
+/* The real input sits invisibly over the cells so the OS keyboard, paste and
+ * one-time-code autofill all work; the cells are only a rendering of its value. */
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  font-size: 16px; /* below 16px iOS Safari zooms on focus */
+  letter-spacing: 3em;
+}
+
+.field {
+  position: relative;
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/connectRejected.schema.json",
+  "title": "ConnectRejected",
+  "description": "Server -> client. `connectRequest` refused. A distinct message from `error` because it is an expected outcome of a well-formed request, not a protocol fault.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "reason"],
+  "properties": {
+    "type": {
+      "const": "connectRejected"
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["notPaired", "desktopOffline", "alreadyInSession"],
+      "description": "`notPaired` covers unknown, never-paired and revoked alike -- distinguishing them would let a caller enumerate deviceIds. `alreadyInSession` means one of the two devices is already in a live session; a second request never silently displaces a working one."
+    }
+  }
+}

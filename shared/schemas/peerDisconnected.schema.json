@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/peerDisconnected.schema.json",
+  "title": "PeerDisconnected",
+  "description": "Server -> client. The other participant ended the session, dropped its socket, or had the pairing revoked. Also the reply to a relay attempt whose peer is no longer connected. Note this concerns the signaling channel: an already-established peer-to-peer stream is unaffected by the signaling server losing sight of either side.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "sessionId"],
+  "properties": {
+    "type": {
+      "const": "peerDisconnected"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

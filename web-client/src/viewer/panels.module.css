@@ -1,0 +1,248 @@
+/* In landscape a bottom sheet would eat the short axis, so secondary surfaces
+ * are a right-hand panel instead. */
+.panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(320px, 42%);
+  background: color-mix(in srgb, var(--color-bg-base) 94%, transparent);
+  backdrop-filter: blur(24px);
+  border-left: 1px solid var(--color-border-subtle);
+  padding:
+    calc(env(safe-area-inset-top) + var(--space-lg))
+    calc(env(safe-area-inset-right) + var(--space-lg))
+    calc(env(safe-area-inset-bottom) + var(--space-lg))
+    var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-base);
+  pointer-events: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex: none;
+}
+
+.panelTitle {
+  font-size: var(--type-size-md);
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--color-text-primary);
+}
+
+.close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  flex: none;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  flex: none;
+}
+
+.footNote {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-top: var(--space-sm);
+  flex: none;
+}
+
+.footLabel {
+  font-size: var(--type-size-xs);
+  line-height: 16px;
+  color: var(--color-text-tertiary);
+}
+
+.footValue {
+  font-family: var(--font-mono);
+  font-size: var(--type-size-xs);
+  line-height: 16px;
+  color: var(--color-text-secondary);
+}
+
+/* ---- stats overlay: a card, not a panel — it must not cover the frame ---- */
+.stats {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 66px);
+  right: calc(env(safe-area-inset-right) + var(--space-lg));
+  width: 296px;
+  max-width: calc(100% - var(--space-2xl));
+  padding: var(--space-base);
+  border-radius: var(--radius-xl);
+  background: rgb(0 0 0 / 0.72);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgb(255 255 255 / 0.09);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  pointer-events: auto;
+}
+
+.statsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.statsLabel {
+  font-size: var(--type-size-2xs);
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  color: var(--color-text-tertiary);
+}
+
+.statsCodec {
+  font-family: var(--font-mono);
+  font-size: var(--type-size-2xs);
+  color: var(--color-text-tertiary);
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px var(--space-md);
+}
+
+.rule {
+  height: 1px;
+  background: rgb(255 255 255 / 0.09);
+}
+
+.statsRows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.statsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.statsRowKey {
+  font-size: var(--type-size-xs);
+  line-height: 16px;
+  color: var(--color-text-tertiary);
+}
+
+.statsRowValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-size-xs);
+  line-height: 16px;
+  color: var(--color-text-secondary);
+}
+
+/* ---- cursor puck ---- */
+.puck {
+  position: absolute;
+  color: #fff;
+  pointer-events: none;
+  transform: translate(-2px, -2px);
+}
+
+.halo {
+  position: absolute;
+  left: -19px;
+  top: -19px;
+  width: var(--size-touch-min);
+  height: var(--size-touch-min);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-bg-accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-bg-accent) 50%, transparent);
+}
+
+/* ---- modifier bar (M2) ---- */
+.modifiers {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding:
+    var(--space-md)
+    calc(env(safe-area-inset-right) + var(--space-lg))
+    calc(env(safe-area-inset-bottom) + var(--space-md))
+    calc(env(safe-area-inset-left) + var(--space-lg));
+  background: var(--color-bg-base);
+  border-top: 1px solid var(--color-border-subtle);
+  overflow-x: auto;
+  scrollbar-width: none;
+  pointer-events: auto;
+}
+
+.modifiers::-webkit-scrollbar { display: none; }
+
+.modSpacer { flex: 1; min-width: var(--space-sm); }
+
+/* ---- reconnect overlay ---- */
+.reconnect {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-base);
+  text-align: center;
+  padding: var(--space-lg);
+  pointer-events: auto;
+}
+
+.reconnectTitle {
+  font-size: var(--type-size-lg);
+  font-weight: 600;
+  line-height: 26px;
+  color: var(--color-text-primary);
+}
+
+.reconnectBody {
+  font-size: var(--type-size-sm);
+  line-height: 20px;
+  color: var(--color-text-secondary);
+  max-width: 360px;
+}
+
+/* A phone in landscape gives the stats card ~300px of height to live in, and it
+ * must clear the bottom bar's 52px controls. Compact rather than scroll: a
+ * readout you have to scroll is a readout you stop checking. */
+@media (max-height: 520px) {
+  .stats {
+    top: calc(env(safe-area-inset-top) + 58px);
+    gap: 10px;
+    padding: var(--space-md);
+    width: 280px;
+  }
+  .stats .statsGrid { gap: 9px var(--space-sm); }
+  .stats .statsRows { gap: 6px; }
+  .stats .rule { margin-block: 1px; }
+
+  /* StatChip sizes its value from --type-size-lg. Overriding the token on the
+   * card scopes the step-down to this context without reaching into another
+   * component's hashed class names. */
+  .stats { --type-size-lg: 17px; }
+}

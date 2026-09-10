@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/heartbeat.schema.json",
+  "title": "Heartbeat",
+  "description": "Client -> server. Liveness for an authenticated connection; refreshes the device's last-seen stamp.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "const": "heartbeat"
+    }
+  }
+}

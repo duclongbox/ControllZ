@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/sessionStarted.schema.json",
+  "title": "SessionStarted",
+  "description": "Server -> client. Both peers receive this. The desktop is sent it first because it is the offerer, so it can begin the SDP offer immediately.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "sessionId", "peerDeviceId", "role"],
+  "properties": {
+    "type": {
+      "const": "sessionStarted"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Scopes every subsequent relayed message. Ephemeral -- it lives in the signaling server's memory only until ICE completes, and never in Postgres."
+    },
+    "peerDeviceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "role": {
+      "$ref": "deviceType.schema.json",
+      "description": "The recipient's own side of the session, not the peer's. `desktop` means \"you are the offerer\"."
+    }
+  }
+}

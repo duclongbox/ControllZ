@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/echo.schema.json",
+  "title": "Echo",
+  "description": "Both directions. Connectivity probe: the server returns the payload unchanged. The only message besides `register` and `authenticate` that an unauthenticated connection may send.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "const": "echo"
+    },
+    "payload": {
+      "type": ["string", "null"]
+    }
+  }
+}

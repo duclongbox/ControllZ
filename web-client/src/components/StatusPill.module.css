@@ -1,0 +1,43 @@
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 10px;
+  border-radius: var(--radius-full);
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(12px);
+  font-size: var(--type-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  flex: none;
+}
+
+/* On an opaque surface the scrim reads as a smudge; use a real surface. */
+.solid {
+  background: var(--color-bg-raised);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  flex: none;
+  background: var(--dot);
+}
+
+.live { --dot: var(--color-status-live); }
+.connecting { --dot: var(--color-status-connecting); }
+.degraded { --dot: var(--color-status-degraded); }
+.relayed { --dot: var(--color-status-relayed); }
+.offline { --dot: var(--color-status-offline); }
+.error { --dot: var(--color-status-error); }
+
+.pulse .dot {
+  animation: pulse 1.4s var(--ease-out) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

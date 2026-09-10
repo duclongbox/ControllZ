@@ -1,0 +1,195 @@
+.hero {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.heroTitle {
+  font-size: var(--type-size-2xl);
+  font-weight: 600;
+  line-height: 40px;
+  letter-spacing: -0.015em;
+  color: var(--color-text-primary);
+}
+
+.heroBody {
+  font-size: var(--type-size-md);
+  line-height: 26px;
+  color: var(--color-text-secondary);
+}
+
+.points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.point {
+  display: flex;
+  gap: var(--space-md);
+  align-items: flex-start;
+}
+
+.pointIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-accent);
+}
+
+.pointText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.pointTitle {
+  font-size: var(--type-size-sm);
+  font-weight: 500;
+  line-height: 19px;
+  color: var(--color-text-primary);
+}
+
+.pointBody {
+  font-size: var(--type-size-sm);
+  line-height: 18px;
+  color: var(--color-text-tertiary);
+}
+
+.fine {
+  font-size: var(--type-size-xs);
+  line-height: 17px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+/* ---- expiry ---- */
+.expiry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.expiryLabel {
+  font-size: var(--type-size-sm);
+  line-height: 18px;
+  color: var(--color-text-tertiary);
+}
+
+.expiryValue {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-size-base);
+  font-weight: 500;
+  color: var(--color-text-warn);
+}
+
+.expired { color: var(--color-text-danger); }
+
+.attempts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) 14px;
+  border-radius: 12px;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-tertiary);
+}
+
+.attemptsText {
+  font-size: var(--type-size-xs);
+  line-height: 17px;
+  color: var(--color-text-tertiary);
+}
+
+/* ---- scanner ---- */
+.scanner {
+  position: absolute;
+  inset: 0;
+  background: #08090b;
+}
+
+.viewfinder {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 26%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reticle {
+  position: relative;
+  width: 250px;
+  height: 250px;
+}
+
+.corner {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  border-color: var(--color-bg-accent);
+}
+
+.tl { top: 0; left: 0; border-top: 3px solid; border-left: 3px solid; border-radius: 16px 0 0 0; }
+.tr { top: 0; right: 0; border-top: 3px solid; border-right: 3px solid; border-radius: 0 16px 0 0; }
+.bl { bottom: 0; left: 0; border-bottom: 3px solid; border-left: 3px solid; border-radius: 0 0 0 16px; }
+.br { bottom: 0; right: 0; border-bottom: 3px solid; border-right: 3px solid; border-radius: 0 0 16px 0; }
+
+.sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  background: color-mix(in srgb, var(--color-bg-accent) 70%, transparent);
+  animation: sweep 2.4s var(--ease-out) infinite;
+}
+
+@keyframes sweep {
+  0%, 100% { transform: translateY(-110px); }
+  50% { transform: translateY(110px); }
+}
+
+.scanHint {
+  position: absolute;
+  top: 16%;
+  left: var(--space-lg);
+  right: var(--space-lg);
+  text-align: center;
+  font-size: var(--type-size-base);
+  line-height: 22px;
+  color: var(--color-text-secondary);
+}
+
+.scanNav {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + var(--space-md));
+  left: var(--space-lg);
+  right: var(--space-lg);
+}
+
+.scanFooter {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom) + var(--space-xl));
+  left: var(--space-lg);
+  right: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* ---- name field ---- */
+.nameBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}

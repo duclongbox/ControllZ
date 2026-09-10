@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/connectRequest.schema.json",
+  "title": "ConnectRequest",
+  "description": "Client -> server. An authenticated phone asks to start a session with a desktop it is already paired with. Answered by `sessionStarted` or `connectRejected`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "targetDeviceId"],
+  "properties": {
+    "type": {
+      "const": "connectRequest"
+    },
+    "targetDeviceId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The paired desktop's deviceId."
+    }
+  }
+}

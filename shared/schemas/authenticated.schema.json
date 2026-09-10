@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/authenticated.schema.json",
+  "title": "Authenticated",
+  "description": "Server -> client. Reply to `authenticate`. A failure is an `error` with code `invalidCredential`, identical for an unknown device and a wrong secret.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "deviceId", "deviceType"],
+  "properties": {
+    "type": {
+      "const": "authenticated"
+    },
+    "deviceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "deviceType": {
+      "$ref": "deviceType.schema.json"
+    }
+  }
+}

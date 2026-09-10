@@ -1,0 +1,65 @@
+/* THE INVARIANT (docs/ui-spec.md §1.1–1.3).
+ *
+ * The stage fills its container on pure black and never moves. The frame is
+ * contain-fit inside it, so it is never cropped — cropping would hide a menu
+ * bar or a dock, which on a remote desktop is a correctness failure, not a
+ * cosmetic one. Chrome floats above and is never in this flow. */
+.stage {
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-stage);
+  overflow: hidden;
+  touch-action: none;
+}
+
+.frame {
+  position: absolute;
+  overflow: hidden;
+}
+
+.video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* never `cover` */
+  display: block;
+  background: var(--color-bg-stage);
+}
+
+/* Dim used behind sheets and the reconnect overlay. The last decoded frame
+ * stays visible underneath — that is what keeps your place. */
+.dim {
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-stage);
+  pointer-events: none;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+
+/* Letterbox bars, made visible for the design/dev views only. */
+.guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--color-bg-accent) 18%, transparent) 0 6px,
+    transparent 6px 12px
+  );
+  pointer-events: none;
+}
+
+.guideStart {
+  left: 0;
+  border-right: 1px dashed color-mix(in srgb, var(--color-bg-accent) 55%, transparent);
+}
+
+.guideEnd {
+  right: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--color-bg-accent) 55%, transparent);
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

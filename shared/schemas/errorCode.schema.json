@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/errorCode.schema.json",
+  "title": "ErrorCode",
+  "description": "Machine-readable code carried by `error`. `notPaired` is deliberately overloaded -- unknown device, never-paired device and revoked pairing all produce it, so rejections cannot be used to discover which deviceIds exist (system-design.md 2.5).",
+  "type": "string",
+  "enum": [
+    "malformedMessage",
+    "unsupportedMessage",
+    "notAuthenticated",
+    "alreadyAuthenticated",
+    "invalidCredential",
+    "wrongDeviceType",
+    "invalidPairCode",
+    "notPaired",
+    "desktopOffline",
+    "alreadyInSession",
+    "unknownSession",
+    "selfPairing",
+    "rateLimited"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/sdpAnswer.schema.json",
+  "title": "SdpAnswer",
+  "description": "Relayed verbatim between peers. The phone answers the desktop's offer with the codec/media subset it accepts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "sessionId", "sdp"],
+  "properties": {
+    "type": {
+      "const": "sdpAnswer"
+    },
+    "sessionId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sdp": {
+      "type": "string"
+    }
+  }
+}

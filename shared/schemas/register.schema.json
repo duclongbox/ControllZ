@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/register.schema.json",
+  "title": "Register",
+  "description": "Client -> server. Enrolls a new physical device. Sent once per device, on an unauthenticated connection; the `registered` reply carries the only copy of the credential.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "deviceType"],
+  "properties": {
+    "type": {
+      "const": "register"
+    },
+    "deviceType": {
+      "$ref": "deviceType.schema.json"
+    },
+    "displayName": {
+      "type": ["string", "null"],
+      "maxLength": 100,
+      "description": "Human-readable name shown to the paired peer. Omitted or blank falls back to \"Desktop\" / \"Phone\"; longer values are truncated to 100 characters."
+    }
+  }
+}

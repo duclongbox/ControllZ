@@ -1,0 +1,142 @@
+/* The portrait app shell.
+ *
+ * Safe-area insets pad the SCREEN, never the video stage — see the viewer,
+ * which deliberately does not use this component. */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-base);
+  padding:
+    calc(env(safe-area-inset-top) + var(--pad-top, var(--space-3xl)))
+    calc(env(safe-area-inset-right) + var(--space-lg))
+    calc(env(safe-area-inset-bottom) + var(--space-xl))
+    calc(env(safe-area-inset-left) + var(--space-lg));
+  gap: var(--space-lg);
+}
+
+.compact {
+  --pad-top: var(--space-2xl);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Let content run to the edges while scrolling, but keep the gutter. */
+  margin-inline: calc(var(--space-lg) * -1);
+  padding-inline: var(--space-lg);
+}
+
+.centered {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex: none;
+}
+
+/* ---- nav bar ---- */
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  height: var(--size-touch-min);
+  flex: none;
+}
+
+.navButton {
+  width: var(--size-touch-min);
+  height: var(--size-touch-min);
+  display: flex;
+  align-items: center;
+  color: var(--color-text-primary);
+}
+
+.navButton:last-child {
+  justify-content: flex-end;
+}
+
+.navSpacer {
+  width: var(--size-touch-min);
+  flex: none;
+}
+
+.navTitle {
+  font-size: var(--type-size-md);
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- title block ---- */
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex: none;
+}
+
+.title {
+  font-size: var(--type-size-2xl);
+  font-weight: 600;
+  line-height: 40px;
+  letter-spacing: -0.015em;
+  color: var(--color-text-primary);
+}
+
+.titleSm {
+  font-size: var(--type-size-xl);
+  line-height: 32px;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  font-size: var(--type-size-base);
+  line-height: 22px;
+  color: var(--color-text-secondary);
+}
+
+.overline {
+  font-size: var(--type-size-2xs);
+  font-weight: 500;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.spacer {
+  flex: 1;
+  min-height: var(--space-lg);
+}
+
+/* Landscape phones give a portrait screen ~390px of height. Tighten the shell
+ * and drop the explainer so the content itself still fits without scrolling —
+ * the subtitle is context, the body is the point. */
+@media (max-height: 520px) {
+  .screen {
+    --pad-top: var(--space-lg);
+    padding-bottom: calc(env(safe-area-inset-bottom) + var(--space-base));
+    gap: var(--space-md);
+  }
+  .body { gap: var(--space-md); }
+  .title { font-size: var(--type-size-lg); line-height: 26px; }
+  .titleSm { font-size: var(--type-size-lg); line-height: 26px; }
+  .subtitle { display: none; }
+  .titleBlock { gap: var(--space-sm); }
+  .spacer { min-height: 0; }
+}
