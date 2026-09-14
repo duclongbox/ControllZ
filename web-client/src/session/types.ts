@@ -88,6 +88,12 @@ export interface SessionState {
   transport: Transport
   quality: Quality
   stats: SessionStats | null
+  /**
+   * The desktop's video, once the track arrives. Null before that and after
+   * the session ends — the stage falls back to its placeholder, so a null
+   * stream is a state to render, not an error.
+   */
+  stream: MediaStream | null
   /** Epoch ms when media started flowing, or null if it has not. */
   startedAt: number | null
   /** Set only when `phase === 'rejected'`. */
@@ -104,6 +110,7 @@ export function initialSessionState(): SessionState {
     transport: 'direct',
     quality: 'nominal',
     stats: null,
+    stream: null,
     startedAt: null,
     rejectReason: null,
     device: null,

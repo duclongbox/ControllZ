@@ -1,9 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <CoreVideo/CoreVideo.h>
+
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "desktophost/capture/test_pattern_capturer.h"
@@ -48,6 +52,41 @@ bool contains(const std::vector<int>& values, int wanted) {
         }
     }
     return false;
+}
+
+void releasePixelBuffer(void* handle) noexcept {
+    CVPixelBufferRelease(static_cast<CVPixelBufferRef>(handle));
+}
+
+/// IOSurface-backed NV12, like ScreenCaptureKit's. The luma level changes per
+/// frame so each one is a real delta rather than a skipped duplicate.
+CVPixelBufferRef createTestFrame(int width, int height, int index) {
+    CFMutableDictionaryRef surfaceProperties = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(attributes, kCVPixelBufferIOSurfacePropertiesKey, surfaceProperties);
+
+    CVPixelBufferRef buffer = nullptr;
+    CVPixelBufferCreate(kCFAllocatorDefault, static_cast<size_t>(width),
+                        static_cast<size_t>(height), kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                        attributes, &buffer);
+    CFRelease(attributes);
+    CFRelease(surfaceProperties);
+    if (buffer == nullptr) {
+        return nullptr;
+    }
+
+    CVPixelBufferLockBaseAddress(buffer, 0);
+    for (size_t plane = 0; plane < 2; ++plane) {
+        auto* base = static_cast<uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(buffer, plane));
+        const size_t stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane);
+        const size_t rows = CVPixelBufferGetHeightOfPlane(buffer, plane);
+        const int value = plane == 0 ? 16 + (index * 7) % 200 : 128;
+        std::memset(base, value, stride * rows);
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, 0);
+    return buffer;
 }
 
 }  // namespace
@@ -125,4 +164,55 @@ TEST_CASE("encoder emits decodable Annex-B with parameter sets on the keyframe",
 
     // Timestamps come from capture, not a frame counter, so they must advance.
     CHECK(frames[1].ptsUs > frames[0].ptsUs);
+}
+
+// Screen capture routinely runs far below the fps hint — a mostly still desktop
+// produced ~25 fps against a 60 fps hint. A keyframe limit derived from
+// frames / fps then fires on elapsed time instead: 300 frames at 60 fps became
+// an IDR every 5 s. Frames are fed with synthetic timestamps so the test covers
+// 8 s of stream time without taking 8 s.
+TEST_CASE("a source slower than the fps hint gets no periodic keyframes", "[encode][pipeline]") {
+    constexpr int kWidth = 320;
+    constexpr int kHeight = 240;
+    constexpr int kFrames = 80;
+    constexpr int64_t kFrameIntervalUs = 100'000;  // 10 fps
+    constexpr int64_t kPastOldKeyframeIntervalUs = 6'000'000;
+
+    EncoderConfig encoderConfig;
+    encoderConfig.width = kWidth;
+    encoderConfig.height = kHeight;
+    encoderConfig.fps = 60;
+    encoderConfig.bitrateBps = 1'000'000;
+
+    auto encoder = makeVideoEncoder(encoderConfig);
+    REQUIRE(encoder != nullptr);
+
+    std::mutex mutex;
+    std::vector<EncodedFrame> frames;
+    REQUIRE(static_cast<bool>(encoder->start([&](const EncodedFrame& frame) {
+        std::lock_guard<std::mutex> lock(mutex);
+        frames.push_back(frame);
+    })));
+
+    encoder->forceKeyframe();
+    for (int i = 0; i < kFrames; ++i) {
+        CVPixelBufferRef buffer = createTestFrame(kWidth, kHeight, i);
+        REQUIRE(buffer != nullptr);
+        encoder->encode(PlatformFrame(buffer, releasePixelBuffer, kWidth, kHeight,
+                                      i * kFrameIntervalUs));
+        // Real-time mode may drop input that arrives faster than it encodes.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    encoder->stop();  // flushes, so every emitted frame is in `frames` now
+
+    std::lock_guard<std::mutex> lock(mutex);
+    REQUIRE_FALSE(frames.empty());
+    // Otherwise the stream never reached the point where the old limit fired.
+    REQUIRE(frames.back().ptsUs >= kPastOldKeyframeIntervalUs);
+
+    CHECK(frames.front().isKeyframe);
+    for (size_t i = 1; i < frames.size(); ++i) {
+        INFO("frame " << i << " at " << frames[i].ptsUs << " us");
+        CHECK_FALSE(frames[i].isKeyframe);
+    }
 }

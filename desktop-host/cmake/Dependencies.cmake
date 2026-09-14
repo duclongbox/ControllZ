@@ -33,4 +33,22 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(libdatachannel Catch2)
+# ---------------------------------------------------------------------------
+# nlohmann/json — signaling messages only.
+#
+# Control plane exclusively: it parses and builds the small JSON envelopes in
+# shared/schemas/ and never touches a pixel, so the GPU-resident capture path
+# (CLAUDE.md) is unaffected. Header-only, so it costs build time and nothing at
+# runtime. libdatachannel vendors this same library but only wires it up when
+# its examples are enabled, which they are not.
+# ---------------------------------------------------------------------------
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(libdatachannel Catch2 nlohmann_json)

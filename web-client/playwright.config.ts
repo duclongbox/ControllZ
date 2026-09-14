@@ -25,6 +25,11 @@ export default defineConfig({
             '--use-fake-device-for-media-stream',
             '--use-fake-ui-for-media-stream',
             '--autoplay-policy=no-user-gesture-required',
+            // The two peers in the e2e run are pages in this same browser, so
+            // they must meet over host candidates. Chromium otherwise hides
+            // local IPs behind mDNS (.local) candidates, which do not resolve
+            // here, and ICE fails with no route.
+            '--disable-features=WebRtcHideLocalIpsWithMdns',
           ],
         },
       },

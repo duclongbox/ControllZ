@@ -15,6 +15,13 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // The phone loads this page over https, and a secure page may not open a
+    // plain ws:// socket. Proxying keeps signalling on the page's own origin,
+    // so it is covered by the same certificate and the server itself can stay
+    // bound to localhost.
+    proxy: {
+      '/ws': { target: 'ws://localhost:8080', ws: true },
+    },
   },
   test: {
     environment: 'jsdom',

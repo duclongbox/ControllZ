@@ -4,7 +4,6 @@ import { ConnectRejected } from './screens/ConnectRejected'
 import { DevGallery, DevState } from './screens/DevGallery'
 import { DeviceDetail } from './screens/DeviceDetail'
 import { Devices } from './screens/Devices'
-import { JoinRoom } from './screens/JoinRoom'
 import { Landing } from './screens/Landing'
 import { PairCode } from './screens/PairCode'
 import { PairScan } from './screens/PairScan'
@@ -27,7 +26,6 @@ export const router = createBrowserRouter([
       { path: '/pair/done', element: <PairSuccess /> },
       { path: '/device/:deviceId', element: <DeviceDetail /> },
       { path: '/session/:deviceId', element: <Viewer /> },
-      { path: '/join', element: <JoinRoom /> },
       { path: '/settings', element: <Settings /> },
       { path: '/landing', element: <Landing /> },
       { path: '/not-paired', element: <ConnectRejected reason="notPaired" /> },

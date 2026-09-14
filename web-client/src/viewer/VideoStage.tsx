@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '../lib/cn'
 import { useElementSize } from '../lib/hooks'
 import { containFit, toNormalised } from '../lib/normalise'
@@ -8,8 +8,16 @@ import { DesktopFrame } from '../mock/DesktopFrame'
 import styles from './VideoStage.module.css'
 
 export interface VideoStageProps {
-  /** Size of the incoming track. At M1 this is `video.videoWidth/Height`. */
+  /**
+   * Fallback size of the incoming track, used until the video reports its own
+   * intrinsic size and whenever there is no stream at all.
+   */
   trackSize: Size
+  /**
+   * The desktop's video. Null renders the placeholder frame instead, which is
+   * what the design views and the mock driver rely on.
+   */
+  stream?: MediaStream | null
   /** 0…1 scrim over the frame — used behind sheets and the reconnect overlay. */
   dim?: number
   /** Paint the pillarbox/letterbox bars. Design and dev views only. */
@@ -27,6 +35,7 @@ export interface VideoStageProps {
 
 export function VideoStage({
   trackSize,
+  stream = null,
   dim = 0,
   showGuides = false,
   onPointer,
@@ -35,7 +44,40 @@ export function VideoStage({
 }: VideoStageProps) {
   const { ref, size } = useElementSize<HTMLDivElement>()
   const frameRef = useRef<HTMLDivElement>(null)
-  const box = containFit(size, trackSize)
+  // A callback ref, not useRef: the frame only renders once the stage has been
+  // measured, so the <video> mounts a render later than this component. An
+  // effect keyed on `stream` alone would have run already, against a ref that
+  // was still null, and the track would never be attached.
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null)
+  const [intrinsic, setIntrinsic] = useState<Size | null>(null)
+
+  // The track's real size is what the letterbox maths and the pointer mapping
+  // must use: a stats-derived guess that disagrees with the decoded frame maps
+  // touches to the wrong place on the desktop.
+  useEffect(() => {
+    if (!video) {
+      setIntrinsic(null)
+      return
+    }
+    if (video.srcObject !== stream) video.srcObject = stream
+
+    const measure = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setIntrinsic({ width: video.videoWidth, height: video.videoHeight })
+      }
+    }
+    measure()
+    // `resize` also covers the desktop changing resolution mid-session.
+    video.addEventListener('loadedmetadata', measure)
+    video.addEventListener('resize', measure)
+    return () => {
+      video.removeEventListener('loadedmetadata', measure)
+      video.removeEventListener('resize', measure)
+    }
+  }, [stream, video])
+
+  const frameSize = stream !== null && intrinsic !== null ? intrinsic : trackSize
+  const box = containFit(size, frameSize)
 
   const handle = useCallback(
     (kind: 'move' | 'down' | 'up') => (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -46,12 +88,12 @@ export function VideoStage({
       // dead-zone rejection is the whole point and must not be duplicated.
       const point = toNormalised(event, {
         getBoundingClientRect: () => frameRef.current!.getBoundingClientRect(),
-        videoWidth: trackSize.width,
-        videoHeight: trackSize.height,
+        videoWidth: frameSize.width,
+        videoHeight: frameSize.height,
       })
       if (point) onPointer(kind, point)
     },
-    [onActivity, onPointer, trackSize.height, trackSize.width],
+    [onActivity, onPointer, frameSize.height, frameSize.width],
   )
 
   return (
@@ -73,7 +115,13 @@ export function VideoStage({
             height: box.height,
           }}
         >
-          <DesktopFrame />
+          {stream ? (
+            // muted + playsInline are what let iOS Safari start it without a
+            // tap; autoplay alone is refused.
+            <video ref={setVideo} className={styles.video} autoPlay muted playsInline />
+          ) : (
+            <DesktopFrame />
+          )}
         </div>
       ) : null}
 

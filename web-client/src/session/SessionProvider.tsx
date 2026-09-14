@@ -1,15 +1,17 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useReducer, useRef } from 'react'
 import type { ReactNode } from 'react'
 import type { SessionClient } from './client'
-import { createMockClient } from './mockClient'
+import { createWsClient } from './wsClient'
 import { SessionContext } from './context'
 
 /* The one place the app decides which SessionClient it is running.
  *
- * M1 changes exactly this line — `createMockClient()` becomes
- * `createWsClient({ url })` — and nothing else in the app moves. */
+ * The real client talks to the signalling server over `/ws` on this same
+ * origin (the Vite dev server proxies it), so no URL is configured here. The
+ * dev gallery still injects `createMockClient()` directly, which is why that
+ * driver stays. */
 function createDefaultClient(): SessionClient {
-  return createMockClient()
+  return createWsClient()
 }
 
 export function SessionProvider({
@@ -20,13 +22,31 @@ export function SessionProvider({
   /** Injected by the dev gallery to render a specific moment. */
   client?: SessionClient
 }) {
-  const fallback = useMemo(() => (client ? null : createDefaultClient()), [client])
-  const active = client ?? fallback!
+  const owned = useRef<SessionClient | null>(null)
+  const [, rebuild] = useReducer((n: number) => n + 1, 0)
+
+  // Lazily on every render, so the tree is never handed a disposed client.
+  if (!client && owned.current === null) owned.current = createDefaultClient()
 
   useEffect(() => {
-    // Only dispose a client we own; an injected one belongs to its owner.
-    return () => fallback?.dispose()
-  }, [fallback])
+    if (client) return // an injected client belongs to its owner
 
-  return <SessionContext.Provider value={active}>{children}</SessionContext.Provider>
+    // StrictMode runs this effect, its cleanup, then the effect again. The
+    // cleanup disposes the client, and a disposed client goes quiet — it still
+    // answers and still receives video, but it emits no state, so the viewer
+    // sits on "Connecting" forever while frames pile up behind it. Build a
+    // fresh one and re-render so the tree actually gets it.
+    if (owned.current === null) {
+      owned.current = createDefaultClient()
+      rebuild()
+    }
+    return () => {
+      owned.current?.dispose()
+      owned.current = null
+    }
+  }, [client])
+
+  return (
+    <SessionContext.Provider value={client ?? owned.current!}>{children}</SessionContext.Provider>
+  )
 }

@@ -1,21 +1,42 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '../components/Button'
 import { EmptyState } from '../components/Feedback'
 import { Field } from '../components/Field'
 import { Overline, Screen, Spacer } from '../components/Screen'
 import styles from './pairing.module.css'
 
+/** What `pairWithCode` resolved with, handed over in the router's location state. */
+interface PairedState {
+  deviceId?: string
+  displayName?: string
+}
+
 export function PairSuccess() {
   const navigate = useNavigate()
-  const [name, setName] = useState('Studio Mac')
+  // The desktop this phone just paired with. Absent when the screen is opened
+  // directly — the dev gallery does that — and there is then no real device to
+  // start a session against, so the screen must not invent one.
+  const paired = (useLocation().state ?? {}) as PairedState
+  const [name, setName] = useState(paired.displayName ?? 'Studio Mac')
 
   return (
     <Screen
       footer={
         <>
-          <Button label="Start session" full onClick={() => navigate('/session/dev_studio_mac')} />
-          <Button label="Later" variant="ghost" full onClick={() => navigate('/')} />
+          {paired.deviceId ? (
+            <Button
+              label="Start session"
+              full
+              onClick={() => navigate(`/session/${paired.deviceId}`)}
+            />
+          ) : null}
+          <Button
+            label={paired.deviceId ? 'Later' : 'Back to devices'}
+            variant={paired.deviceId ? 'ghost' : 'primary'}
+            full
+            onClick={() => navigate('/')}
+          />
         </>
       }
     >

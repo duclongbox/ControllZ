@@ -142,6 +142,7 @@ export function Viewer() {
     <div className={styles.viewer}>
       <VideoStage
         trackSize={track}
+        stream={state.stream}
         dim={reconnecting ? 0.66 : dim}
         onActivity={wake}
         onPointer={overlay === null ? handlePointer : undefined}

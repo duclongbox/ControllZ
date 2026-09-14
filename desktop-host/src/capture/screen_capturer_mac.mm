@@ -22,6 +22,11 @@ namespace {
 
 constexpr int64_t kTimeoutSeconds = 10;
 
+/// Marks the sample handler queue so stop() can tell it is running on it. Only
+/// the address matters.
+char kCaptureQueueKeyStorage;
+void* const kCaptureQueueKey = &kCaptureQueueKeyStorage;
+
 /// Shared between the C++ capturer and the Objective-C stream delegate. The
 /// delegate outlives stop() from ScreenCaptureKit's point of view, so the
 /// callbacks live behind a flag rather than in the capturer itself.
@@ -212,6 +217,7 @@ public:
             queue_ = dispatch_queue_create("com.remotehost.desktop-host.capture",
                                            dispatch_queue_attr_make_with_qos_class(
                                                DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0));
+            dispatch_queue_set_specific(queue_, kCaptureQueueKey, kCaptureQueueKey, nullptr);
 
             NSError* addError = nil;
             if (![stream_ addStreamOutput:output_
@@ -262,6 +268,17 @@ public:
                     dispatch_semaphore_signal(stopped);
                 }];
                 dispatch_semaphore_wait(stopped, timeout());
+            }
+
+            // The running flag only stops handlers that have not read it yet.
+            // One that already copied the callback may still be inside it, and
+            // the caller is about to tear the encoder down, so wait it out:
+            // the handler queue is serial, and once this empty block runs,
+            // nothing is left in flight. Skipped when stop() is itself called
+            // from a frame callback, where waiting on our own queue would
+            // deadlock.
+            if (queue_ != nil && dispatch_get_specific(kCaptureQueueKey) == nullptr) {
+                dispatch_sync(queue_, ^{});
             }
             reset();
         }

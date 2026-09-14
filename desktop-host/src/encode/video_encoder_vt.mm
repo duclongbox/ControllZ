@@ -4,7 +4,6 @@
 #import <Foundation/Foundation.h>
 #import <VideoToolbox/VideoToolbox.h>
 
-#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <memory>
@@ -149,14 +148,15 @@ private:
         setInt(session_, kVTCompressionPropertyKey_AverageBitRate, config_.bitrateBps);
         applyDataRateLimit();
 
-        // Long GOP: periodic keyframes buy nothing here and each one is a
-        // bitrate spike. Recovery is explicit instead — a new viewer joining,
-        // or an RTCP PLI once transport lands.
-        setInt(session_, kVTCompressionPropertyKey_MaxKeyFrameInterval,
-               config_.keyFrameIntervalFrames);
-        const int32_t keyframeSeconds =
-            config_.fps > 0 ? std::max(1, config_.keyFrameIntervalFrames / config_.fps) : 5;
-        setInt(session_, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, keyframeSeconds);
+        // No periodic keyframes: each one is a bitrate spike, and recovery is
+        // explicit instead — a new viewer joining, or an RTCP PLI once
+        // transport lands (system-design.md 2.1). Both limits are set to 0
+        // ("no limit") rather than left at the default so neither can
+        // reappear. A duration limit would fire on stream time even while
+        // capture runs far below the fps hint, which is the normal case for a
+        // mostly still desktop.
+        setInt(session_, kVTCompressionPropertyKey_MaxKeyFrameInterval, 0);
+        setInt(session_, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 0);
 
         // Tag colour explicitly so the browser is not left inferring it; a
         // mismatch here shows up as subtly washed-out output.

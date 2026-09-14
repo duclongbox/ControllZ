@@ -23,7 +23,6 @@ const ROUTES: Array<[string, string, string]> = [
   ['/pair/done', 'Pair · success', 'M3'],
   ['/', 'Devices', 'M3'],
   ['/device/dev_studio_mac', 'Device detail', 'M3'],
-  ['/join', 'Join room (dev stub)', 'M1'],
   ['/session/dev_studio_mac', 'Session · direct', 'M1'],
   ['/session/dev_work_pc', 'Session · relayed', 'M4'],
   ['/session/dev_living_room', 'Session · offline device', 'M3'],

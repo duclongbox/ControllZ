@@ -26,10 +26,9 @@ struct EncoderConfig {
     double dataRateLimitFactor = 1.5;
     double dataRateWindowSeconds = 1.0;
 
-    /// Deliberately long. Periodic keyframes cost bitrate spikes for no
-    /// benefit here; recovery is driven by explicit forceKeyframe() calls
-    /// instead (a new viewer joining, or an RTCP PLI once transport exists).
-    int keyFrameIntervalFrames = 300;
+    // No keyframe interval setting: the encoder never inserts periodic
+    // keyframes. Recovery is driven by explicit forceKeyframe() calls (a new
+    // viewer joining, or an RTCP PLI once transport exists).
 };
 
 /// Invoked on the encoder's own callback thread. Must not block.
@@ -53,7 +52,8 @@ public:
     /// would mean reopening the encoder session.
     virtual void setBitrate(int bitrateBps) = 0;
 
-    /// Flushes pending frames and tears the session down. Idempotent.
+    /// Flushes pending frames and tears the session down. Idempotent. Must not
+    /// run concurrently with encode(): stop the frame source first.
     virtual void stop() = 0;
 };
 

@@ -7,6 +7,8 @@ import { InlineWait } from '../components/Feedback'
 import { Icon } from '../components/Icon'
 import { NavBar, Screen, ScreenTitle, Spacer } from '../components/Screen'
 import { formatCountdown } from '../lib/format'
+import { useSessionClient } from '../session/useSession'
+import type { WsSessionClient } from '../session/wsClient'
 import styles from './pairing.module.css'
 
 type Status = 'entering' | 'verifying' | 'invalid'
@@ -22,6 +24,7 @@ const MAX_ATTEMPTS = 3
  */
 export function PairCode() {
   const navigate = useNavigate()
+  const client = useSessionClient() as Partial<WsSessionClient>
   const [code, setCode] = useState('')
   const [status, setStatus] = useState<Status>('entering')
   const [attemptsLeft, setAttemptsLeft] = useState(MAX_ATTEMPTS)
@@ -32,17 +35,27 @@ export function PairCode() {
     return () => clearInterval(id)
   }, [])
 
+  function refuse() {
+    setStatus('invalid')
+    setAttemptsLeft((n) => Math.max(0, n - 1))
+  }
+
   function submit(entered: string) {
     setStatus('verifying')
-    // Stands in for pairCodeSubmit → pairedConfirmed | error.
-    setTimeout(() => {
-      if (entered === ACCEPTED) {
-        navigate('/pair/done')
-      } else {
-        setStatus('invalid')
-        setAttemptsLeft((n) => Math.max(0, n - 1))
-      }
-    }, 900)
+
+    // The dev gallery injects the mock driver, which has no pairing half; it
+    // keeps the one accepted code so the screens stay clickable offline.
+    if (!client.pairWithCode) {
+      setTimeout(() => (entered === ACCEPTED ? navigate('/pair/done') : refuse()), 900)
+      return
+    }
+
+    // pairCodeSubmit → pairedConfirmed carries the desktop this phone may now
+    // connect to, which is exactly the id the viewer route needs.
+    client
+      .pairWithCode(entered)
+      .then((desktop) => navigate(`/session/${desktop.deviceId}`))
+      .catch(() => refuse())
   }
 
   const expired = remaining === 0

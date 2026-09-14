@@ -25,10 +25,17 @@ include(cmake/Dependencies.cmake)
 add_library(desktophost_core STATIC
     src/version.cpp
     src/encode/annex_b.cpp
+    src/transport/peer_connection_rtc.cpp
+    src/signaling/signaling_client_ws.cpp
 )
 
 target_include_directories(desktophost_core PUBLIC include)
-target_link_libraries(desktophost_core PUBLIC LibDataChannel::LibDataChannel)
+target_link_libraries(desktophost_core
+    PUBLIC LibDataChannel::LibDataChannel
+    # Private: JSON is an implementation detail of the signaling client and
+    # must not leak into the interface headers other packages compile against.
+    PRIVATE nlohmann_json::nlohmann_json
+)
 
 if(APPLE)
     # ScreenCaptureKit and VideoToolbox are Objective-C, so the two backends are
