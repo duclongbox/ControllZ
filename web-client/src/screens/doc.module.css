@@ -1,0 +1,123 @@
+/* Reading layout for the pages that are mostly words: install, privacy,
+ * security, 404. Same tokens as the app, but sized for prose and capped so it
+ * stays readable on a laptop — these are the only screens a desktop browser is
+ * expected to open besides the landing page. */
+.page {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  background: var(--color-bg-base);
+}
+
+.inner {
+  max-width: 660px;
+  margin: 0 auto;
+  padding:
+    calc(env(safe-area-inset-top) + var(--space-2xl))
+    calc(env(safe-area-inset-right) + var(--space-lg))
+    calc(env(safe-area-inset-bottom) + var(--space-3xl))
+    calc(env(safe-area-inset-left) + var(--space-lg));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.title {
+  font-size: var(--type-size-xl);
+  font-weight: 600;
+  line-height: 32px;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.lede {
+  font-size: var(--type-size-base);
+  line-height: 24px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.h2 {
+  font-size: var(--type-size-md);
+  font-weight: 600;
+  line-height: 24px;
+  color: var(--color-text-primary);
+  margin: var(--space-sm) 0 0;
+}
+
+.p {
+  font-size: var(--type-size-sm);
+  line-height: 21px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  gap: var(--space-md);
+  font-size: var(--type-size-sm);
+  line-height: 21px;
+  color: var(--color-text-secondary);
+}
+
+.bullet {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-inset);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--type-size-2xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.itemTitle {
+  display: block;
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--type-size-xs);
+  line-height: 20px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+
+.footnote {
+  font-size: var(--type-size-xs);
+  line-height: 18px;
+  color: var(--color-text-tertiary);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}

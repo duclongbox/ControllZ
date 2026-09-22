@@ -141,14 +141,13 @@ public:
 
         // An identity from a previous run keeps existing pairings valid;
         // without one this is a first run and the server issues both.
+        reRegistered_ = false;
         if (identity_.valid()) {
             send(json{{"type", "authenticate"},
                       {"deviceId", identity_.deviceId},
                       {"credential", identity_.credential}});
         } else {
-            send(json{{"type", "register"},
-                      {"deviceType", "desktop"},
-                      {"displayName", config_.displayName}});
+            sendRegister();
         }
 
         {
@@ -213,6 +212,12 @@ private:
         }
     }
 
+    void sendRegister() {
+        send(json{{"type", "register"},
+                  {"deviceType", "desktop"},
+                  {"displayName", config_.displayName}});
+    }
+
     void handleMessage(const std::string& payload) {
         json message;
         try {
@@ -271,6 +276,21 @@ private:
         } else if (type == "error") {
             const std::string code = message.value("code", "");
             const std::string text = message.value("message", "");
+            // The server keeps its device list in memory until Postgres lands,
+            // so a restart there outlives the identity this file still names.
+            // Enrolling again turns a host that could never start into one
+            // that just needs pairing again — which the phone already does
+            // for itself on the same error. Once only: a server refusing the
+            // fresh credential too is a real fault, not a stale file.
+            if (code == "invalidCredential" && !reRegistered_) {
+                reRegistered_ = true;
+                std::fprintf(stderr,
+                             "[signaling] this desktop is no longer enrolled; registering "
+                             "again — the phone will have to pair with the new code\n");
+                identity_ = Identity{};
+                sendRegister();
+                return;
+            }
             // An error arriving before the handshake completes is the reason
             // connect() is still blocked, so it has to unblock it.
             finishHandshake("signaling rejected this device: " + text + " (" + code + ")");
@@ -306,6 +326,9 @@ private:
     std::shared_ptr<rtc::WebSocket> ws_;
     bool open_ = false;
     bool identified_ = false;
+    /// Guards the re-enrolment above against looping on a server that refuses
+    /// every credential.
+    bool reRegistered_ = false;
     std::string handshakeError_;
     std::string lastError_;
 };

@@ -1,4 +1,10 @@
-import { containFit, fromNormalised, letterboxKind, toNormalised } from '../src/lib/normalise'
+import {
+  containFit,
+  fromNormalised,
+  letterboxKind,
+  toFramePoint,
+  toNormalised,
+} from '../src/lib/normalise'
 
 /* The letterbox maths is the only real logic in the client right now, and the
  * one place a silent bug would be invisible: a wrong offset does not throw, it
@@ -134,5 +140,38 @@ describe('fromNormalised', () => {
     const back = fromNormalised(point, box)
     expect(back.x).toBeCloseTo(500, 3)
     expect(back.y).toBeCloseTo(200, 3)
+  })
+})
+
+describe('toFramePoint', () => {
+  const video = {
+    getBoundingClientRect: () => ({ left: 100, top: 50, width: 800, height: 450 }) as DOMRect,
+    videoWidth: 1600,
+    videoHeight: 900,
+  }
+
+  it('reports where a bar touch actually is instead of rejecting it', () => {
+    // toNormalised returns null here, which is right for direct mode and wrong
+    // for trackpad mode: the delta still counts, so the caller needs the
+    // position and the flag rather than nothing.
+    const point = toFramePoint({ clientX: 60, clientY: 275 }, video)
+
+    expect(point).not.toBeNull()
+    expect(point!.inFrame).toBe(false)
+    expect(point!.nx).toBeCloseTo(-0.05)
+    expect(toNormalised({ clientX: 60, clientY: 275 }, video)).toBeNull()
+  })
+
+  it('agrees with toNormalised on the frame itself', () => {
+    const framePoint = toFramePoint({ clientX: 500, clientY: 275 }, video)
+    const normalised = toNormalised({ clientX: 500, clientY: 275 }, video)
+
+    expect(framePoint!.inFrame).toBe(true)
+    expect(framePoint!.nx).toBeCloseTo(normalised!.nx)
+    expect(framePoint!.ny).toBeCloseTo(normalised!.ny)
+  })
+
+  it('is null before a frame has decoded, because there is nothing to map to', () => {
+    expect(toFramePoint({ clientX: 500, clientY: 275 }, { ...video, videoWidth: 0 })).toBeNull()
   })
 })

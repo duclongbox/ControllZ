@@ -58,7 +58,8 @@ export interface Device {
   /** How the last (or current) session reached it. */
   transport: Transport
   pairedAt: string
-  lastConnectedAt: string
+  /** Null until a session with this desktop has actually carried media. */
+  lastConnectedAt: string | null
   displays: Display[]
 }
 

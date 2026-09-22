@@ -1,4 +1,4 @@
-import type { NormalisedPoint } from '../lib/normalise'
+import type { PointerIntent } from '../protocol/input'
 import type { QualityPriority, SessionState } from './types'
 
 /**
@@ -37,11 +37,15 @@ export interface SessionClient {
   setDisplay(displayId: string): void
 
   /**
-   * M2: a pointer sample, already normalised to 0…1 by `toNormalised`.
-   * Callers must drop dead-zone touches rather than clamping, so this never
-   * receives an out-of-range point.
+   * One pointer intent, in desktop terms: a cursor position, or a click with
+   * the count already decided.
+   *
+   * An intent rather than a raw touch, because the translation belongs on the
+   * phone — `PointerControl` owns the gesture rules and the virtual cursor, and
+   * the desktop is left with nothing to infer. Positions are normalised 0…1 and
+   * already inside the frame; dead-zone touches never get this far.
    */
-  sendPointer(kind: 'move' | 'down' | 'up', point: NormalisedPoint): void
+  sendPointer(intent: PointerIntent): void
 
   /** M2: a physical key, never a character — layouts differ per OS. */
   sendKey(kind: 'down' | 'up', code: string, modifiers: readonly string[]): void

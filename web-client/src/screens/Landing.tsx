@@ -16,12 +16,12 @@ const STEPS = [
   [
     '2',
     'Pair once with a code',
-    'The desktop shows six digits. Type them on your phone, or scan the code. That is the last time you will ever need one.',
+    'The desktop shows six digits. Type them on your phone. That is the last time you will ever need one.',
   ],
   [
     '3',
     'Open it on your phone',
-    'Your computers are listed, with whichever ones are awake marked live. Tap one and the screen is there.',
+    'Your computers are listed, with whichever ones are awake marked live. Tap one and the screen is there — no code, no account.',
   ],
 ] as const
 
@@ -39,7 +39,7 @@ const CLAIMS: Array<[IconName, string, string]> = [
   [
     'globe',
     'Same Wi-Fi or the other side of the world',
-    'One connection path, not two. ICE picks the local route whenever there is one and falls back to a relay when there is not — with nothing for you to switch.',
+    'One connection path, not two. ICE picks the local route whenever there is one, with nothing for you to switch. Relay fallback, for networks that allow no direct route at all, is designed and not yet built.',
   ],
   [
     'pointer',
@@ -86,9 +86,17 @@ export function Landing() {
             <span className={styles.wordmark}>RemoteHost</span>
           </span>
           <span className={styles.navLinks}>
-            <span className={styles.navLink}>How it works</span>
-            <span className={styles.navLink}>Security</span>
-            <span className={styles.navLink}>Requirements</span>
+            {/* Real anchors, not styled spans: they have to work with a
+              * middle-click, and the sections they point at carry the ids. */}
+            <a className={styles.navLink} href="#how-it-works">
+              How it works
+            </a>
+            <a className={styles.navLink} href="#security">
+              Security
+            </a>
+            <a className={styles.navLink} href="#requirements">
+              Requirements
+            </a>
             <Link to="/">
               <Button label="Open the app" variant="secondary" />
             </Link>
@@ -99,7 +107,7 @@ export function Landing() {
           <div className={styles.heroCopy}>
             <span className={styles.badge}>
               <span className={styles.badgeDot} />
-              macOS and Windows · iPhone and Android
+              Pre-release · macOS first, Windows designed
             </span>
             <h1 className={styles.h1}>
               Your desktop,
@@ -113,9 +121,16 @@ export function Landing() {
               your computer to your phone — peer-to-peer, hardware-encoded, and smooth enough to
               actually work in.
             </p>
+            {/* There is no packaged build to download yet, so these go to the
+              * page that says so and gives the build steps, rather than to a
+              * file that does not exist. */}
             <div className={styles.ctaRow}>
-              <Button label="Download for macOS" icon="download" />
-              <Button label="Download for Windows" variant="secondary" />
+              <Link to="/install">
+                <Button label="Get it for macOS" icon="download" />
+              </Link>
+              <Link to="/install">
+                <Button label="Get it for Windows" variant="secondary" />
+              </Link>
             </div>
             <span className={styles.fine}>
               Nothing to install on the phone — it runs in the browser and can be added to your home
@@ -133,12 +148,13 @@ export function Landing() {
           <StatChip caption="CODEC" value="H.264 HW" />
           <StatChip caption="SERVER SEES" value="0 bytes" tone="good" />
           <span className={styles.stripNote}>
-            Latency measured glass-to-glass on one local network. Real numbers vary with your link —
-            the app shows you its own, live.
+            Design targets, not benchmarks — the first three are what the pipeline is built to hit,
+            and the app shows you its own numbers live while a session runs. The last one is
+            structural: there is no path through our servers for a frame to take.
           </span>
         </div>
 
-        <section className={styles.section}>
+        <section className={styles.section} id="how-it-works">
           <div>
             <span className={styles.eyebrow}>How it works</span>
             <h2 className={styles.h2}>Three steps, then never again.</h2>
@@ -165,7 +181,7 @@ export function Landing() {
           </div>
         </section>
 
-        <section className={cn(styles.section, styles.tinted)}>
+        <section className={cn(styles.section, styles.tinted)} id="security">
           <div className={styles.split}>
             <div className={styles.splitCol}>
               <span className={styles.eyebrow}>Security</span>
@@ -225,7 +241,7 @@ export function Landing() {
           </div>
         </section>
 
-        <section className={styles.section}>
+        <section className={styles.section} id="requirements">
           <div className={styles.split}>
             <div className={styles.splitCol}>
               <span className={styles.eyebrow}>Requirements</span>
@@ -249,8 +265,12 @@ export function Landing() {
               <span className={styles.claimBody}>
                 Install on the computer you want to reach. The phone side is just a link.
               </span>
-              <Button label="Download for macOS" icon="download" full />
-              <Button label="Download for Windows" variant="secondary" full />
+              <Link to="/install">
+                <Button label="Get it for macOS" icon="download" full />
+              </Link>
+              <Link to="/pair/code">
+                <Button label="I already have the code" variant="secondary" full />
+              </Link>
             </div>
           </div>
         </section>
@@ -258,9 +278,15 @@ export function Landing() {
         <footer className={styles.footer}>
           <span className={styles.footerText}>RemoteHost</span>
           <span className={styles.footerLinks}>
-            <span className={styles.footerText}>Privacy</span>
-            <span className={styles.footerText}>Security</span>
-            <span className={styles.footerText}>Source</span>
+            <Link className={styles.footerLink} to="/privacy">
+              Privacy
+            </Link>
+            <Link className={styles.footerLink} to="/security">
+              Security
+            </Link>
+            <Link className={styles.footerLink} to="/install">
+              Install
+            </Link>
           </span>
         </footer>
       </div>

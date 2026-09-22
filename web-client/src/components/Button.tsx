@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from 'react'
+import type { ButtonHTMLAttributes, Ref } from 'react'
 import { cn } from '../lib/cn'
 import { Icon } from './Icon'
 import type { IconName } from './Icon'
@@ -12,6 +12,8 @@ export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement
   icon?: IconName
   full?: boolean
   loading?: boolean
+  /** React 19 passes refs as an ordinary prop; forwarded so dialogs can focus. */
+  ref?: Ref<HTMLButtonElement>
 }
 
 /**
@@ -26,10 +28,12 @@ export function Button({
   loading = false,
   disabled,
   className,
+  ref,
   ...rest
 }: ButtonProps) {
   return (
     <button
+      ref={ref}
       type="button"
       className={cn(styles.button, styles[variant], full && styles.full, className)}
       disabled={disabled || loading}

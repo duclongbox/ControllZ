@@ -28,7 +28,10 @@ export function Connecting({
         subtitle="Every step is named. If it stalls, you can see exactly where."
       />
 
-      <div className={styles.ladder}>
+      {/* A polite live region: the rungs light one after another with no
+        * focus change, so without this the wait is silent to a screen reader
+        * until it either succeeds or gives up. */}
+      <div className={styles.ladder} role="status" aria-live="polite">
         {steps.map((step, index) => (
           <div key={step.id} className={cn(styles.step, styles[step.state])}>
             <div className={styles.rail}>

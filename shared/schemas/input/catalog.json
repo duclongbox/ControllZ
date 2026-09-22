@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/catalog.json",
+  "title": "Input message catalog (data plane)",
+  "description": "Messages carried on the WebRTC input DataChannel, phone -> desktop only. DELIBERATELY SEPARATE from ../catalog.json: that one is the signaling control plane and mirrors the sealed SignalingMessage hierarchy in signaling-server, which never sees these. Adding an input type there would claim a parity the server does not have, and would suggest input bytes pass through our servers. They do not (CLAUDE.md architecture invariants).",
+  "transport": {
+    "channel": "input",
+    "ordered": false,
+    "maxRetransmits": 0,
+    "createdBy": "desktop-host",
+    "note": "The desktop is the offerer, and an answerer cannot add an m-line the offer lacks, so the host creates the channel before setLocalDescription() and the phone receives it via ondatachannel. No signaling message is involved: the channel is negotiated inside the existing SDP exchange."
+  },
+  "messages": [
+    { "type": "pointerMove", "direction": "phoneToDesktop", "schema": "pointerMove.schema.json" },
+    { "type": "pointerDown", "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" },
+    { "type": "pointerUp",   "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" }
+  ],
+  "deferred": [
+    { "type": "scroll", "milestone": "M2 follow-up" },
+    { "type": "keyDown/keyUp", "milestone": "M2 follow-up", "note": "KeyboardEvent.code -> CGKeyCode table" }
+  ]
+}

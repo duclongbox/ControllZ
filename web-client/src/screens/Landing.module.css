@@ -57,6 +57,11 @@
 .navLink {
   font-size: var(--type-size-sm);
   color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.navLink:hover {
+  color: var(--color-text-primary);
 }
 
 @media (max-width: 720px) {
@@ -443,4 +448,31 @@
   flex-direction: column;
   gap: var(--space-xs);
   min-width: 0;
+}
+
+.footerLink {
+  font-size: var(--type-size-xs);
+  color: var(--color-text-tertiary);
+  text-decoration: none;
+}
+
+.footerLink:hover {
+  color: var(--color-text-primary);
+}
+
+/* The nav links scroll this page, not the window — `.page` is the scroll
+ * container — and the sections clear the 76px nav so a heading is not left
+ * under it. */
+.page {
+  scroll-behavior: smooth;
+}
+
+.section {
+  scroll-margin-top: var(--space-lg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page {
+    scroll-behavior: auto;
+  }
 }

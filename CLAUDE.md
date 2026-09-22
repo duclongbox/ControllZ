@@ -26,7 +26,7 @@ Full system design: see /docs/system-design.md.
                          Source of truth for the message catalog.
 - `docs/`             — architecture and design docs.
 
-## Milestone roadmap (build in this order)
+<!-- ## Milestone roadmap (build in this order)
 0. **Scaffolding** (current milestone) — repo structure per the layout above,
    CI (lint/test/build per package), an empty-but-building skeleton for
    web-client, signaling-server, desktop-host, and shared. No features.
@@ -54,7 +54,7 @@ see /docs/implementation-plan.md.
 Local toolchain, repo structure, and per-package setup: /docs/setup.md.
 
 Don't jump ahead of the current milestone without discussing it first — each
-one is scoped deliberately to keep sessions reviewable.
+one is scoped deliberately to keep sessions reviewable. -->
 
 ## Conventions
 - Trunk-based development: `main` is always deployable. PRs are squash-merged.

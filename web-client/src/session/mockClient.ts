@@ -1,4 +1,4 @@
-import type { NormalisedPoint } from '../lib/normalise'
+import type { PointerIntent } from '../protocol/input'
 import type { RejectReason } from '../protocol/types'
 import type { SessionClient } from './client'
 import type {
@@ -246,8 +246,9 @@ export function createMockClient(options: MockClientOptions = {}): SessionClient
       patch({ activeDisplayId: displayId })
     },
 
-    sendPointer(_kind: 'move' | 'down' | 'up', _point: NormalisedPoint) {
-      // M2. Nothing to send at M0 — the desktop host does not exist yet.
+    sendPointer(_intent: PointerIntent) {
+      // The mock driver has no desktop to move a cursor on. Accepting and
+      // discarding keeps the design views and the gallery working.
     },
 
     sendKey(_kind: 'down' | 'up', _code: string, _modifiers: readonly string[]) {

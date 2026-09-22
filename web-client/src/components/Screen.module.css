@@ -140,3 +140,19 @@
   .titleBlock { gap: var(--space-sm); }
   .spacer { min-height: 0; }
 }
+
+/* On anything wider than a phone the app screens hold a phone-shaped column
+ * instead of stretching a 52px button across a laptop. The viewer is exempt —
+ * it does not use this component, because the stage must fill whatever it is
+ * given (ui-spec §1.1). */
+@media (min-width: 720px) {
+  .screen {
+    /* `inset: 0` set right: 0 as well; with left and width both given, the
+     * over-constrained `right` is the one the browser drops. */
+    left: 50%;
+    width: min(420px, 100%);
+    transform: translateX(-50%);
+    border-left: 1px solid var(--color-border-subtle);
+    border-right: 1px solid var(--color-border-subtle);
+  }
+}

@@ -17,20 +17,25 @@ import styles from './DevGallery.module.css'
  * there is no server yet, so several states are otherwise unreachable. */
 
 const ROUTES: Array<[string, string, string]> = [
+  ['/', 'Home · resolves by state', 'M3'],
   ['/welcome', 'Welcome', 'M3'],
-  ['/pair/scan', 'Pair · scan QR', 'M3'],
   ['/pair/code', 'Pair · enter code', 'M3'],
+  ['/pair/scan', 'Pair · scan QR', 'M3'],
   ['/pair/done', 'Pair · success', 'M3'],
-  ['/', 'Devices', 'M3'],
   ['/device/dev_studio_mac', 'Device detail', 'M3'],
   ['/session/dev_studio_mac', 'Session · direct', 'M1'],
   ['/session/dev_work_pc', 'Session · relayed', 'M4'],
   ['/session/dev_living_room', 'Session · offline device', 'M3'],
   ['/settings', 'Settings', 'M5'],
   ['/landing', 'Landing page', '—'],
+  ['/install', 'Install & home screen', '—'],
+  ['/privacy', 'Privacy', '—'],
+  ['/security', 'Security', '—'],
+  ['/no-such-page', 'Not found', '—'],
 ]
 
 const STATES: Array<[string, string, string]> = [
+  ['devices-list', 'Devices · fixtures', 'M3'],
   ['devices-empty', 'Devices · empty', 'M3'],
   ['reject-notPaired', 'Rejected · notPaired', 'M3'],
   ['reject-desktopOffline', 'Rejected · desktopOffline', 'M3'],
@@ -74,6 +79,10 @@ export function DevState() {
   const { stateId = '' } = useParams()
 
   switch (stateId) {
+    // Both pass an explicit list: the screen otherwise reads this phone's real
+    // storage, and the gallery must not depend on what is paired today.
+    case 'devices-list':
+      return <Devices devices={DEVICES} />
     case 'devices-empty':
       return <Devices devices={[]} />
     case 'reject-notPaired':

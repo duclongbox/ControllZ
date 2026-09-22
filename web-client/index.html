@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <!-- The viewer is a full-screen surface: no user zoom, and the layout must
          extend under the notch so the stage can fill the display. -->
     <meta
@@ -11,7 +13,38 @@
     />
     <meta name="theme-color" content="#0B0C0E" />
     <meta name="color-scheme" content="dark" />
-    <title>RemoteHost</title>
+
+    <!-- Launched from the home screen, iOS reads these rather than the
+         manifest: standalone chrome, and a status bar that sits over the
+         page instead of above it. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="RemoteHost" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <title>RemoteHost — your desktop, on your phone</title>
+    <meta
+      name="description"
+      content="Control your Mac or PC from a phone browser. The screen streams peer-to-peer, hardware-encoded, straight from your computer — our servers only introduce the two devices."
+    />
+
+    <!-- Without these a shared link previews as a blank card, which for a page
+         whose job is to be shared is most of the page. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="RemoteHost" />
+    <meta property="og:title" content="RemoteHost — your desktop, on your phone" />
+    <meta
+      property="og:description"
+      content="Control your Mac or PC from a phone browser. Peer-to-peer video, hardware-encoded, with touch input that lands where you meant."
+    />
+    <meta property="og:image" content="/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="RemoteHost — your desktop, on your phone" />
+    <meta
+      name="twitter:description"
+      content="Control your Mac or PC from a phone browser. Peer-to-peer video, hardware-encoded, with touch input that lands where you meant."
+    />
+    <meta name="twitter:image" content="/icon-512.png" />
   </head>
   <body>
     <div id="root"></div>

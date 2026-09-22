@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/pointerSample.schema.json",
+  "title": "Pointer sample fields",
+  "description": "Fields every pointer message carries. Each message is self-contained: absolute position AND the absolute button mask, never a delta and never an event the receiver has to accumulate. That is what makes the unordered/unreliable channel survivable -- a lost packet degrades to a late repair rather than permanently wrong state.",
+  "type": "object",
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "Monotonic per channel, one stream for every pointer message type. The receiver drops a move whose seq it has already passed (the channel reorders) and drops a button transition older than the last one applied for that button."
+    },
+    "t": {
+      "type": "integer",
+      "description": "Sender's clock in ms (Date.now()). Diagnostics only -- never used for ordering, because the two clocks are unsynchronised."
+    },
+    "nx": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Horizontal position as a fraction of the rendered video frame. Normalised rather than pixels so a resolution change on the desktop cannot invalidate an in-flight packet; the phone never learns the desktop resolution. See docs/ui-spec.md section 4."
+    },
+    "ny": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Vertical position, same basis as nx."
+    },
+    "buttons": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 7,
+      "description": "Bitmask of buttons held AFTER this event: 1 left, 2 right, 4 middle. Same values as DOM MouseEvent.buttons. Present on moves too, which is how a lost pointerUp repairs itself: the next move disagrees with what the host holds, and the host reconciles."
+    }
+  },
+  "required": ["seq", "t", "nx", "ny", "buttons"]
+}

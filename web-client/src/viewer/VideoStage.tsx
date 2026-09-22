@@ -2,9 +2,10 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '../lib/cn'
 import { useElementSize } from '../lib/hooks'
-import { containFit, toNormalised } from '../lib/normalise'
-import type { FrameBox, NormalisedPoint, Size } from '../lib/normalise'
+import { containFit, toFramePoint } from '../lib/normalise'
+import type { FrameBox, Size } from '../lib/normalise'
 import { DesktopFrame } from '../mock/DesktopFrame'
+import type { StagePointerSample } from './pointerControl'
 import styles from './VideoStage.module.css'
 
 export interface VideoStageProps {
@@ -23,10 +24,14 @@ export interface VideoStageProps {
   /** Paint the pillarbox/letterbox bars. Design and dev views only. */
   showGuides?: boolean
   /**
-   * Pointer activity inside the rendered frame, already normalised to 0…1.
-   * Never fires for a touch in the bars — those are not desktop interactions.
+   * Raw pointer activity, mapped into frame space but not yet interpreted.
+   *
+   * The stage deliberately does not decide what a touch means: it reports where
+   * the finger is and whether that is on the frame, and `PointerControl` turns
+   * that into clicks and cursor moves. Bar touches are reported too, flagged
+   * `inFrame: false` — trackpad mode needs them, direct mode drops them.
    */
-  onPointer?: (kind: 'move' | 'down' | 'up', point: NormalisedPoint) => void
+  onPointer?: (sample: StagePointerSample) => void
   /** Any pointer activity at all, including the bars. Wakes the chrome. */
   onActivity?: () => void
   /** Overlays that need to know where the frame actually is. */
@@ -44,6 +49,7 @@ export function VideoStage({
 }: VideoStageProps) {
   const { ref, size } = useElementSize<HTMLDivElement>()
   const frameRef = useRef<HTMLDivElement>(null)
+  const activePointer = useRef<number | null>(null)
   // A callback ref, not useRef: the frame only renders once the stage has been
   // measured, so the <video> mounts a render later than this component. An
   // effect keyed on `stream` alone would have run already, against a ref that
@@ -79,30 +85,69 @@ export function VideoStage({
   const frameSize = stream !== null && intrinsic !== null ? intrinsic : trackSize
   const box = containFit(size, frameSize)
 
-  const handle = useCallback(
-    (kind: 'move' | 'down' | 'up') => (event: ReactPointerEvent<HTMLDivElement>) => {
-      onActivity?.()
-      if (!onPointer || !frameRef.current) return
-
-      // Reuse the production mapping rather than a stage-local shortcut: the
-      // dead-zone rejection is the whole point and must not be duplicated.
-      const point = toNormalised(event, {
-        getBoundingClientRect: () => frameRef.current!.getBoundingClientRect(),
-        videoWidth: frameSize.width,
-        videoHeight: frameSize.height,
-      })
-      if (point) onPointer(kind, point)
+  const emit = useCallback(
+    (kind: StagePointerSample['kind'], event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!onPointer) return
+      const frame = frameRef.current
+        ? toFramePoint(event, {
+            getBoundingClientRect: () => frameRef.current!.getBoundingClientRect(),
+            videoWidth: frameSize.width,
+            videoHeight: frameSize.height,
+          })
+        : null
+      onPointer({ kind, frame, at: event.timeStamp })
     },
-    [onActivity, onPointer, frameSize.height, frameSize.width],
+    [onPointer, frameSize.height, frameSize.width],
+  )
+
+  const handleDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      onActivity?.()
+      // One pointer at a time. Multi-touch gestures are deferred, and letting a
+      // second finger interleave would have it fight the first for the cursor.
+      if (activePointer.current !== null) return
+      activePointer.current = event.pointerId
+
+      // Touch pointers are captured implicitly, mice are not — so without this
+      // a drag that leaves the stage stops reporting and the button is never
+      // released. Same reason `pointercancel` is handled at all.
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Not supported, or the pointer is already gone. Implicit capture on
+        // touch still covers the case that matters on a phone.
+      }
+      emit('down', event)
+    },
+    [emit, onActivity],
+  )
+
+  const handleMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      onActivity?.()
+      if (activePointer.current !== event.pointerId) return
+      emit('move', event)
+    },
+    [emit, onActivity],
+  )
+
+  const handleEnd = useCallback(
+    (kind: 'up' | 'cancel') => (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (activePointer.current !== event.pointerId) return
+      activePointer.current = null
+      emit(kind, event)
+    },
+    [emit],
   )
 
   return (
     <div
       ref={ref}
       className={styles.stage}
-      onPointerDown={handle('down')}
-      onPointerMove={handle('move')}
-      onPointerUp={handle('up')}
+      onPointerDown={handleDown}
+      onPointerMove={handleMove}
+      onPointerUp={handleEnd('up')}
+      onPointerCancel={handleEnd('cancel')}
     >
       {box ? (
         <div

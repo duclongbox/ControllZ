@@ -25,7 +25,13 @@ export function Welcome() {
     <Screen
       footer={
         <>
-          <Button label="Pair a computer" full onClick={() => navigate('/pair/scan')} />
+          <Button label="Pair a computer" full onClick={() => navigate('/pair/code')} />
+          <Button
+            label="What is this?"
+            variant="ghost"
+            full
+            onClick={() => navigate('/landing')}
+          />
           <span className={styles.fine}>You will need the code shown in the desktop app.</span>
         </>
       }

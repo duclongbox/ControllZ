@@ -32,29 +32,47 @@ VideoToolbox SDKs).
 ## Running each package
 
 ```bash
-# web-client — dev server, reachable from the phone over LAN
-cd web-client && npm install && npm run dev
+# web-client — pick ONE, they are mutually exclusive:
+#
+#   npm run dev          direct LAN access (http://<your-lan-ip>:5173). Add
+#                        HTTPS=1 for a secure context, which service workers
+#                        and the PWA install prompt both require.
+#   npm run dev:tunnel   access through the tunnel URL only. This pins the HMR
+#                        socket to wss://<host>:443, so loading the LAN address
+#                        under it fails with ERR_CONNECTION_REFUSED and an
+#                        uncaught "WebSocket closed without opened".
+cd web-client && npm install && npm run dev:tunnel
 
 # signaling-server — http://localhost:8080, health at /actuator/health
-cd signaling-server && ./mvnw spring-boot:run
+cd signaling-server ./mvnw spring-boot:run
+
+# the tunnel — ngrok rather than cloudflared. Cloudflare Tunnel needs outbound
+# port 7844, which guest and public Wi-Fi routinely block; the symptom is a
+# Cloudflare "Error 1033" page while the local dev server is perfectly healthy.
+# ngrok runs over 443, so it survives those networks.
+brew install --cask ngrok
+ngrok config add-authtoken <token>   # one-time, from dashboard.ngrok.com
+npm run tunnel                       # = ngrok http 5173
+
+# First visit on the phone shows ngrok's ERR_NGROK_6024 warning page instead of
+# the app — tap "Visit Site" once; a cookie then suppresses it for 7 days. Use
+# the tunnel URL on every network, including your own Wi-Fi: it is the one
+# address that works everywhere, so nothing needs reconfiguring per network.
+
+# ngrok's free tier allows 20k requests/month, and the dev server spends
+# hundreds of them per phone reload (one request per module). For a long phone
+# session, tunnel a production build instead — a handful of requests:
+npm run build && npm run preview     # then, in another shell:
+npm run tunnel:preview               # = ngrok http 4173
+
+# restart validated devices:
+rm ~/.remotehost/desktop-identity.json
 
 # desktop-host
 cd desktop-host && cmake --preset debug && cmake --build --preset debug
-./build/debug/desktop-host --help
+./build/debug/desktop-host --serve --name "Studio Mac"
 ```
 
-## Lint, test, build
-
-Every package exposes the same three steps; CI runs exactly these.
-
-| Package | Command |
-|---|---|
-| `web-client` | `npm run lint && npm run test && npm run build` |
-| `signaling-server` | `./mvnw verify` (Spotless check + tests) |
-| `desktop-host` | `cmake --build --preset debug && ctest --preset debug` |
-| `shared` | `npm run validate` (samples against schemas) |
-
-End-to-end browser tests: `cd web-client && npm run test:e2e`.
 
 
 ## Target repository structure

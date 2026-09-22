@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/pointerMove.schema.json",
+  "title": "pointerMove",
+  "description": "Where the pointer is now. Coalesced by the sender to at most one per animation frame -- a raw touchmove stream is 120 Hz on a modern phone and every extra packet is jitter on the same DTLS transport the video uses. Stale-droppable and idempotent: unlike a button transition, losing one costs nothing once the next arrives.",
+  "allOf": [{ "$ref": "pointerSample.schema.json" }],
+  "type": "object",
+  "properties": {
+    "type": { "const": "pointerMove" }
+  },
+  "required": ["type"]
+}

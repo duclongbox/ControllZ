@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/pointerButton.schema.json",
+  "title": "pointerDown / pointerUp",
+  "description": "A button transition, carrying the position it happened at so it never depends on a move arriving first. Must-arrive at app level: the host synthesises a press for an orphan pointerUp, releases held buttons after a silence (deadman), and releases everything when the channel closes -- a stuck button is the worst failure this milestone can produce.",
+  "allOf": [{ "$ref": "pointerSample.schema.json" }],
+  "type": "object",
+  "properties": {
+    "type": { "enum": ["pointerDown", "pointerUp"] },
+    "button": {
+      "enum": ["left", "right", "middle"],
+      "description": "Which button changed. Only `left` is produced at M2; right and middle are in the schema because the host translation is generic over the enum, so the gestures that emit them are a phone-side change alone."
+    },
+    "clickCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3,
+      "description": "1 single, 2 double, 3 triple. THE PHONE DECIDES THIS, not the host: tap timing and finger travel are gesture context the phone has and the host would have to re-derive across a lossy channel. macOS needs it as kCGMouseEventClickState -- two plain clicks in a row do NOT register as a double-click in most apps."
+    }
+  },
+  "required": ["type", "button", "clickCount"]
+}

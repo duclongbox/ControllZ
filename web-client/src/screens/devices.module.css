@@ -54,6 +54,38 @@
   color: var(--color-text-primary);
 }
 
+/* Tapping the name opens an inline rename — the only editable thing on the
+ * screen, so it gets an affordance rather than a separate edit mode. */
+.nameButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-sm);
+  margin: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.nameButton:active {
+  background: var(--color-bg-surface);
+}
+
+.renameBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.renameActions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: center;
+}
+
 .deviceName {
   font-size: var(--type-size-lg);
   font-weight: 600;

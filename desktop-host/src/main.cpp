@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -7,13 +8,18 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "desktophost/capture/screen_capturer.h"
 #include "desktophost/capture/test_pattern_capturer.h"
 #include "desktophost/encode/video_encoder.h"
+#include "desktophost/input/input_injector.h"
+#include "desktophost/input/input_router.h"
 #include "desktophost/signaling/signaling_client.h"
+#include "desktophost/transport/mdns_candidate.h"
 #include "desktophost/transport/peer_connection.h"
 #include "desktophost/version.h"
 
@@ -38,7 +44,13 @@ struct Options {
     std::string signalingUrl = "ws://localhost:8080/ws";
     std::string displayName = "Desktop";
     std::string identityPath;  // empty: resolved under $HOME
-    std::string stunUrl = "stun:stun.l.google.com:19302";
+    // Raw --stun value: a comma-separated list, "none" to disable STUN, or
+    // empty to leave PeerConnectionConfig's built-in list untouched. Keeping
+    // the default in exactly one place (peer_connection.h) stops the two
+    // copies drifting apart, which is how a host ends up quietly gathering
+    // against a server nobody meant to use.
+    std::string stunUrl;
+    bool input = true;
 };
 
 std::atomic<bool> g_interrupted{false};
@@ -51,6 +63,25 @@ std::string defaultIdentityPath() {
         return "desktop-identity.json";
     }
     return std::string(home) + "/.remotehost/desktop-identity.json";
+}
+
+/// Splits a comma-separated list, trimming surrounding spaces and dropping
+/// empty fields, so "a, b," yields {"a", "b"}.
+std::vector<std::string> splitList(const std::string& value) {
+    std::vector<std::string> out;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const std::size_t comma = value.find(',', start);
+        const std::size_t end = comma == std::string::npos ? value.size() : comma;
+        std::size_t first = start;
+        std::size_t last = end;
+        while (first < last && std::isspace(static_cast<unsigned char>(value[first]))) ++first;
+        while (last > first && std::isspace(static_cast<unsigned char>(value[last - 1]))) --last;
+        if (last > first) out.push_back(value.substr(first, last - first));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out;
 }
 
 void printUsage() {
@@ -67,7 +98,10 @@ void printUsage() {
         "  --name <text>       name shown on the phone (default: Desktop)\n"
         "  --identity <path>   where the device identity is stored\n"
         "                      (default: ~/.remotehost/desktop-identity.json)\n"
-        "  --stun <url>        STUN server, or 'none' for host candidates only\n"
+        "  --stun <urls>       comma-separated STUN servers, or 'none' for host\n"
+        "                      candidates only (default: Cloudflare, Google and\n"
+        "                      Twilio on port 3478)\n"
+        "  --no-input          stream only; refuse pointer control from the phone\n"
         "  --record <path>     output file (default: capture.h264)\n"
         "  --seconds <n>       recording duration (default: 10)\n"
         "  --fps <n>           frame rate ceiling (default: 60)\n"
@@ -104,6 +138,8 @@ bool parseArgs(int argc, char** argv, Options* options, bool* shouldExit) {
             options->showsCursor = false;
         } else if (std::strcmp(arg, "--test-pattern") == 0) {
             options->testPattern = true;
+        } else if (std::strcmp(arg, "--no-input") == 0) {
+            options->input = false;
         } else if (std::strcmp(arg, "--serve") == 0) {
             options->serve = true;
         } else if (std::strcmp(arg, "--signaling") == 0) {
@@ -305,12 +341,17 @@ struct Session {
     std::unique_ptr<desktophost::IScreenCapturer> capturer;
     std::unique_ptr<desktophost::IVideoEncoder> encoder;
     std::unique_ptr<desktophost::IPeerConnection> peer;
+    std::unique_ptr<desktophost::IInputInjector> injector;
+    std::unique_ptr<desktophost::InputRouter> router;
 
     // Published only once each stage is running; the capture and encoder
     // threads read these rather than the unique_ptrs, which the session
     // thread is still assigning.
     std::atomic<desktophost::IVideoEncoder*> liveEncoder{nullptr};
     std::atomic<desktophost::IPeerConnection*> livePeer{nullptr};
+    // Read by libdatachannel's thread on every input message and by the main
+    // loop's deadman tick.
+    std::atomic<desktophost::InputRouter*> liveRouter{nullptr};
 };
 
 void stopSession(const std::shared_ptr<Session>& session) {
@@ -320,6 +361,14 @@ void stopSession(const std::shared_ptr<Session>& session) {
     // Unpublish first so in-flight frames stop reaching a closing encoder.
     session->liveEncoder.store(nullptr);
     session->livePeer.store(nullptr);
+    session->liveRouter.store(nullptr);
+
+    // Before the peer connection goes: no pointerUp can arrive after this, so
+    // anything still held has to be let go here or the desktop is left with a
+    // stuck mouse button and no way to hear about it.
+    if (session->router) {
+        session->router->releaseAll();
+    }
 
     if (session->capturer) {
         session->capturer->stop();
@@ -343,6 +392,20 @@ int runServe(const Options& options) {
     if (!signaling) {
         std::fprintf(stderr, "no signaling backend on this platform\n");
         return 1;
+    }
+
+    // Asked for once at startup, with the prompt, rather than at session start:
+    // the dialog is useless the moment the user is holding the phone. This is
+    // the Accessibility grant, NOT the Screen Recording one capture already
+    // has — seeing the screen does not imply being allowed to click on it.
+    if (options.input && !desktophost::inputInjectionPermitted(true)) {
+        std::fprintf(stderr,
+                     "\n  Pointer control needs the Accessibility permission.\n"
+                     "  System Settings > Privacy & Security > Accessibility, then restart "
+                     "this host.\n"
+                     "  Launched from a terminal, the permission lands on the TERMINAL app\n"
+                     "  (Terminal, iTerm, your IDE), not on desktop-host.\n"
+                     "  Sessions still stream video meanwhile; they are just view-only.\n\n");
     }
 
     std::mutex sessionMutex;
@@ -402,13 +465,34 @@ int runServe(const Options& options) {
             return;
         }
 
+        // Input is set up before the offer, because whether the offer carries
+        // an SCTP m-line at all depends on whether this side can inject: a
+        // channel the host would only ever ignore is worse than no channel,
+        // since the phone would show a live cursor that does nothing.
+        if (options.input) {
+            session->injector = desktophost::makeInputInjector(options.displayId);
+            if (!session->injector) {
+                std::fprintf(stderr, "no input backend on this platform — view-only session\n");
+            } else if (!desktophost::inputInjectionPermitted(false)) {
+                std::fprintf(stderr,
+                             "Accessibility permission missing — view-only session. Grant it in\n"
+                             "System Settings > Privacy & Security > Accessibility, then "
+                             "reconnect.\n");
+                session->injector.reset();
+            } else {
+                session->router = std::make_unique<desktophost::InputRouter>(
+                    session->injector.get());
+            }
+        }
+
         desktophost::PeerConnectionConfig peerConfig;
-        if (options.stunUrl != "none") {
-            peerConfig.iceServers = {options.stunUrl};
-        } else {
+        if (options.stunUrl == "none") {
             peerConfig.iceServers.clear();
+        } else if (!options.stunUrl.empty()) {
+            peerConfig.iceServers = splitList(options.stunUrl);
         }
         peerConfig.bitrateKbps = options.bitrateBps / 1000;
+        peerConfig.enableInputChannel = session->router != nullptr;
 
         session->peer = desktophost::makePeerConnection(peerConfig);
 
@@ -421,6 +505,7 @@ int runServe(const Options& options) {
         };
         peerCallbacks.onLocalCandidate = [&signaling, sessionId](const std::string& candidate,
                                                                  const std::string& mid) {
+            std::printf("  ice local  > %s\n", candidate.c_str());
             signaling->sendIceCandidate(sessionId, candidate, mid);
         };
         peerCallbacks.onStateChange = [session](desktophost::PeerState state) {
@@ -447,6 +532,19 @@ int runServe(const Options& options) {
                 encoder->forceKeyframe();
             }
         };
+        // Injected straight from libdatachannel's thread. CGEventPost does not
+        // block, so a worker thread in between would add a queue and a frame of
+        // latency to buy nothing; a backend that can block needs one.
+        peerCallbacks.onInputMessage = [session](std::string message) {
+            if (auto* router = session->liveRouter.load()) {
+                router->handleMessage(message, std::chrono::steady_clock::now());
+            }
+        };
+        peerCallbacks.onInputChannelClosed = [session] {
+            if (auto* router = session->liveRouter.load()) {
+                router->releaseAll();
+            }
+        };
 
         if (auto status = session->peer->start(std::move(peerCallbacks)); status.failed()) {
             std::fprintf(stderr, "transport failed to start: %s\n", status.message().c_str());
@@ -457,6 +555,7 @@ int runServe(const Options& options) {
 
         session->livePeer.store(session->peer.get());
         session->liveEncoder.store(session->encoder.get());
+        session->liveRouter.store(session->router.get());
 
         std::shared_ptr<Session> previous;
         {
@@ -466,8 +565,9 @@ int runServe(const Options& options) {
         }
         stopSession(previous);
 
-        std::printf("session %s: streaming %dx%d\n", sessionId.c_str(),
-                    session->capturer->width(), session->capturer->height());
+        std::printf("session %s: streaming %dx%d, input %s\n", sessionId.c_str(),
+                    session->capturer->width(), session->capturer->height(),
+                    session->router ? "enabled" : "disabled");
     };
 
     auto withSession = [&](const std::string& sessionId, auto&& action) {
@@ -510,6 +610,34 @@ int runServe(const Options& options) {
     callbacks.onIceCandidate = [&](const std::string& sessionId, const std::string& candidate,
                                    const std::string& sdpMid) {
         withSession(sessionId, [&](const std::shared_ptr<Session>& session) {
+            std::printf("  ice remote < %s\n", candidate.c_str());
+
+            // A browser hides the phone's local IP behind a random
+            // "<uuid>.local" name, which libjuice discards outright. Resolving
+            // it restores the one pair that works when both peers sit behind
+            // the same router. Resolution talks to mDNSResponder and can take
+            // a moment, and this runs on the signaling socket's thread, so it
+            // goes to a worker: the shared_ptr keeps the session alive for as
+            // long as that worker needs it.
+            if (candidate.find(".local") != std::string::npos) {
+                std::thread([session, candidate, sdpMid] {
+                    const std::optional<std::string> resolved =
+                        desktophost::resolveMdnsCandidate(candidate,
+                                                          desktophost::resolveHostAddress);
+                    if (!resolved) {
+                        std::fprintf(stderr,
+                                     "  ice remote < ^ mDNS name did not resolve; dropping this\n"
+                                     "                host candidate. Same-network pairing now\n"
+                                     "                relies on the phone reaching *our* host\n"
+                                     "                candidate.\n");
+                        return;
+                    }
+                    std::printf("  ice remote < ^ resolved to %s\n", resolved->c_str());
+                    session->peer->addRemoteCandidate(*resolved, sdpMid);
+                }).detach();
+                return;
+            }
+
             session->peer->addRemoteCandidate(candidate, sdpMid);
         });
     };
@@ -556,6 +684,19 @@ int runServe(const Options& options) {
     std::printf("waiting for a paired phone (Ctrl-C to stop)\n");
     while (!g_interrupted.load() && !disconnected.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // The deadman. A live session repairs a lost pointerUp within a frame
+        // from the button mask on the next move; this is for when the samples
+        // stop altogether — the phone locked, the network dropped — and there
+        // is nothing left to repair against.
+        {
+            std::lock_guard<std::mutex> lock(sessionMutex);
+            if (current) {
+                if (auto* router = current->liveRouter.load()) {
+                    router->tick(std::chrono::steady_clock::now());
+                }
+            }
+        }
 
         if (std::chrono::steady_clock::now() < nextCodeAt) {
             continue;

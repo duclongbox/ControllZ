@@ -116,3 +116,79 @@ export function useElementSize<T extends HTMLElement>() {
 
   return { ref, size }
 }
+
+/**
+ * True on something that is plainly not a phone: a wide viewport driven by a
+ * mouse. Used only to decide what an unpaired visitor sees at `/` — the
+ * marketing page, which has the desktop downloads on it, rather than a pairing
+ * flow they cannot finish on the machine they are reading it on.
+ *
+ * Deliberately not used for layout. Layout is a media query's job.
+ */
+export function useIsDesktop(): boolean {
+  const query = '(min-width: 900px) and (pointer: fine)'
+  const [desktop, setDesktop] = useState(() =>
+    typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+      ? false
+      : window.matchMedia(query).matches,
+  )
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mql = window.matchMedia(query)
+    const update = (event: MediaQueryListEvent) => setDesktop(event.matches)
+    setDesktop(mql.matches)
+    mql.addEventListener('change', update)
+    return () => mql.removeEventListener('change', update)
+  }, [])
+
+  return desktop
+}
+
+/**
+ * Holds a Screen Wake Lock while `active`.
+ *
+ * The lock is dropped by the browser whenever the page is hidden — switching
+ * apps, or the phone locking — and is NOT restored on return, so it is
+ * re-acquired on every `visibilitychange`. Unsupported browsers (iOS before
+ * 16.4) simply never resolve one; there is no fallback worth having.
+ */
+export function useWakeLock(active: boolean): void {
+  useEffect(() => {
+    if (!active) return
+    const wakeLock = (navigator as Navigator & { wakeLock?: WakeLockAPI }).wakeLock
+    if (!wakeLock) return
+
+    let sentinel: WakeLockSentinelLike | null = null
+    let cancelled = false
+
+    const acquire = async () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      try {
+        sentinel = await wakeLock.request('screen')
+      } catch {
+        // Denied, or the tab lost focus mid-request. Nothing to recover.
+      }
+    }
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void acquire()
+    }
+
+    void acquire()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisible)
+      void sentinel?.release().catch(() => {})
+    }
+  }, [active])
+}
+
+interface WakeLockSentinelLike {
+  release(): Promise<void>
+}
+
+interface WakeLockAPI {
+  request(type: 'screen'): Promise<WakeLockSentinelLike>
+}

@@ -46,15 +46,22 @@ export function PairCode() {
     // The dev gallery injects the mock driver, which has no pairing half; it
     // keeps the one accepted code so the screens stay clickable offline.
     if (!client.pairWithCode) {
-      setTimeout(() => (entered === ACCEPTED ? navigate('/pair/done') : refuse()), 900)
+      setTimeout(() => (entered === ACCEPTED ? navigate('/pair/done', { replace: true }) : refuse()), 900)
       return
     }
 
     // pairCodeSubmit → pairedConfirmed carries the desktop this phone may now
-    // connect to, which is exactly the id the viewer route needs.
+    // connect to. It goes to the success screen rather than straight into a
+    // session: that screen is what writes the pairing to this phone's device
+    // list, and it is the only chance to name the computer.
     client
       .pairWithCode(entered)
-      .then((desktop) => navigate(`/session/${desktop.deviceId}`))
+      .then((desktop) =>
+        navigate('/pair/done', {
+          replace: true,
+          state: { deviceId: desktop.deviceId, displayName: desktop.displayName },
+        }),
+      )
       .catch(() => refuse())
   }
 
@@ -80,7 +87,7 @@ export function PairCode() {
         )
       }
     >
-      <NavBar title="Pair a computer" onBack={() => navigate('/pair/scan')} />
+      <NavBar title="Pair a computer" onBack={() => navigate('/')} />
 
       <ScreenTitle
         small

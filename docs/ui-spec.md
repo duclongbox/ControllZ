@@ -53,31 +53,36 @@ CLAUDE.md. Breaking one is a bug, not a style disagreement.
 
 | Screen | Route | M | Sends | Receives / renders |
 |---|---|---|---|---|
+| `Home` | `/` | M3 | — | resolver, not a screen: device list, else `/welcome` on a phone, `/landing` on a desktop |
 | `Welcome` | `/welcome` | M3 | — | first run only, zero pairings |
-| `PairScan` | `/pair/scan` | M3 | — | camera decodes code → `/pair/code` |
+| `PairScan` | `/pair/scan` | M3 | — | camera decode is unbuilt; the screen says so and points at `/pair/code` |
 | `PairCode` | `/pair/code` | M3 | `pairCodeSubmit` | auto-submits on 6th digit |
 | `PairVerifying` | `/pair/code` | M3 | — | awaiting `pairedConfirmed` \| `error` |
 | `PairError` | `/pair/code` | M3 | `pairCodeSubmit` | `error` · `codeExpired` \| `codeInvalid` \| `rateLimited` |
-| `PairSuccess` | `/pair/done` | M3 | — | `pairedConfirmed`, stores credential |
+| `PairSuccess` | `/pair/done` | M3 | — | `pairedConfirmed`; writes the pairing to `store/devices` and names it |
 | `Devices` | `/` | M3 | `authenticate` | `authenticated` + presence per device |
 | `DevicesEmpty` | `/` | M3 | `authenticate` | `authenticated`, zero pairings |
 | `DeviceDetail` | `/device/:id` | M3 | — | local record + live presence |
-| `JoinRoom` | `/join` | M1 | `joinRoom` | `roomJoined` — **dev stub, deleted at M3** |
 | `Connecting` | `/session/:id` | M1 | `connectRequest` | `sessionStarted`, `sdpOffer`, `iceCandidate` |
 | `Main` (viewer) | `/session/:id` | M1 | `sdpAnswer`, `iceCandidate` | RTP video track; chrome visible |
 | `ViewerIdle` | `/session/:id` | M1 | — | chrome auto-hidden after 3 s |
 | `ViewerStats` | `/session/:id` | M1 | — | `RTCPeerConnection.getStats()` at 1 Hz |
-| `ViewerInputTrackpad` | `/session/:id` | M2 | `pointerMove/Down/Up` | unordered DataChannel, coalesced per rAF |
+| `ViewerInputTrackpad` | `/session/:id` | M2 | `pointerMove/Down/Up` | unordered DataChannel, coalesced per rAF — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown`, `keyUp` | physical `code` + modifier state |
 | `ViewerMonitors` | `/session/:id` | M2 | `setDisplay` | renegotiates, forces an IDR |
 | `ViewerQuality` | `/session/:id` | M4 | `setQualityPriority` | ladder position echoed back |
 | `ViewerRelayed` | `/session/:id` | M4 | — | candidate pair type `=== "relay"` |
 | `ViewerReconnecting` | `/session/:id` | M5 | `iceRestart` | holds the last decoded frame |
-| `SessionEnded` | `/session/:id/end` | M1 | `endSession` | `peerDisconnected` + session summary |
+| `SessionEnded` | `/session/:id` | M1 | `endSession` | `peerDisconnected` + session summary — a phase of the viewer, not a URL of its own |
 | `ConnectRejected` | `/session/:id` | M3 | `connectRequest` | `connectRejected` · `notPaired` |
 | `ConnectRejected` | `/session/:id` | M3 | `connectRequest` | `connectRejected` · `desktopOffline` |
 | `ConnectRejected` | `/session/:id` | M3 | `connectRequest` | `connectRejected` · `alreadyInSession` |
-| `Settings` | `/settings` | M5 | — | local preferences only |
+| `Settings` | `/settings` | M5 | — | `store/prefs`, plus links to the prose pages |
+| `Landing` | `/landing` | — | — | marketing page; lazy-loaded, linked from `Welcome` and `Settings` |
+| `Install` | `/install` | — | — | desktop build steps, macOS permissions, add-to-home-screen |
+| `Privacy` | `/privacy` | — | — | what is stored locally and what the server sees |
+| `Security` | `/security` | — | — | media encryption, pairing, credential, revocation |
+| `NotFound` | `*` | — | — | a real 404, not a redirect to `/` |
 | `OfflineNoNetwork` | any | M5 | — | `navigator.onLine === false` |
 | `InstallPrompt` | any | M5 | — | `beforeinstallprompt` |
 | `RotateHint` | `/session/:id` | M5 | — | portrait + session active |
@@ -90,9 +95,10 @@ CLAUDE.md. Breaking one is a bug, not a style disagreement.
 | `HostSettings` | host · settings | M1 | — | local config |
 | `HostTray` | host · menu bar | M1 | — | live session summary |
 
-**M1 subset** (build only these): `JoinRoom`, `Connecting`, `Main`,
-`ViewerIdle`, `ViewerStats`, `SessionEnded`, plus the four host screens
-tagged M1.
+**M1 subset** (build only these): `Connecting`, `Main`, `ViewerIdle`,
+`ViewerStats`, `SessionEnded`, plus the four host screens tagged M1. The
+`JoinRoom` room-code stub that once stood at `/join` is gone — pairing by
+code reaches the same place.
 
 Message names above are the literal `type` strings in
 `shared/schemas/catalog.json`, except `joinRoom`/`roomJoined` (the M1
@@ -111,6 +117,7 @@ Several artboards are states of one screen. The implementation collapses them:
 | `Devices`, `DevicesEmpty` | `screens/Devices.tsx` |
 | `NotPaired`, `DesktopOffline`, `alreadyInSession` | `screens/ConnectRejected.tsx` keyed by reason |
 | `InstallPrompt`, `RotateHint`, `OfflineNoNetwork` | `app/AppShell.tsx` overlays, not routes |
+| `Privacy`, `Security`, `Install`, `NotFound` | `screens/DocPage.tsx` frame + per-page content |
 
 The overlays are conditions, not destinations: losing the network mid-session
 must not push a history entry the user then has to press Back through.
@@ -168,12 +175,23 @@ On the wire:
 { "type": "pointerMove", "seq": 40118, "t": 1757030412, "nx": 0.6183, "ny": 0.4402 }
 ```
 
-On the host, at injection time:
+On the host, at injection time — against the display's **bounds in the OS's
+global coordinate space**, not the captured frame's pixel dimensions:
 
 ```cpp
-const double x = msg.nx * display.widthPx();
-const double y = msg.ny * display.heightPx();
+const CGRect b = CGDisplayBounds(displayId);   // points, global origin
+const double x = b.origin.x + msg.nx * b.size.width;
+const double y = b.origin.y + msg.ny * b.size.height;
 ```
+
+The distinction is not pedantry. `CGEvent` takes points in a space whose origin
+is the top-left of the *main* display, so a second monitor has a non-zero — and
+possibly negative — origin. Mapping against the frame's pixels instead puts
+every click on the wrong monitor the moment display 2 is the captured one, and
+misplaces them on a Retina display even with one screen attached. The bounds are
+re-read per event rather than cached, so changing resolution mid-session
+re-anchors the next event instead of scaling it against a display that no longer
+exists. Implemented in `desktop-host/src/input/pointer_mapping.cpp`.
 
 **Why normalised, not pixels.** The input channel is unordered and
 unreliable, so a resolution change and an in-flight coordinate can cross.
@@ -273,13 +291,43 @@ family is a one-line change if it is ever revisited.
 
 ---
 
-## 7. Open questions
+## 7. Local state
+
+Everything the phone remembers, and the only places a screen may write it.
+None of it is sent anywhere: `store/` is this device's own memory.
+
+| Key | Owner | What |
+|---|---|---|
+| `remotehost.deviceId` | `session/wsClient.ts` | this phone's id, from `registered` |
+| `remotehost.credential` | `session/wsClient.ts` | bearer secret for reconnecting |
+| `remotehost.devices` | `store/devices.ts` | paired computers and the names given to them |
+| `remotehost.prefs` | `store/prefs.ts` | wake lock, stats overlay, haptics, chrome delay, pointer mode |
+| `remotehost.installDismissed` | `app/AppShell.tsx` | the install sheet was answered once |
+
+Two rules hold for all of them. Every read is wrapped — private mode throws
+rather than returning null — and a malformed value falls back per field, so
+hand-edited storage degrades to defaults instead of a blank screen. And
+`presence` is never stored: whether a desktop is awake is the server's
+answer, and a remembered "online" would be a lie by the next launch.
+
+The PWA shell — `public/manifest.webmanifest`, `public/sw.js` and the icons
+generated by `scripts/gen-icons.mjs` — exists for the same screens: the
+service worker is network-first, and is there so `beforeinstallprompt` can
+fire at all and so an offline launch reaches `OfflineNoNetwork` rather than
+the browser's own error page.
+
+---
+
+## 8. Open questions
 
 1. `setDisplay`, `setQualityPriority`, `iceRestart` and `revokePairing`
    are designed but absent from `shared/schemas/catalog.json`. Add them in
    the milestone that first needs them (M2, M4, M5, M3 respectively).
    `web-client/src/protocol/types.ts` hand-mirrors the vocabulary that *does*
-   exist; it is deleted when codegen lands.
+   exist; it is deleted when codegen lands. The pointer messages are **not**
+   among these: they are data-plane, live in `shared/schemas/input/`, and are
+   mirrored by `web-client/src/protocol/input.ts` — the signaling server never
+   sees one.
 2. Multi-monitor is designed as a one-at-a-time switcher (`ViewerMonitors`,
    `HostSettings`), matching the recommendation in implementation-plan.md
    §2.9. Confirm before M2 builds the coordinate mapping against it.

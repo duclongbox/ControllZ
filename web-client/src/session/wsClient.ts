@@ -1,4 +1,5 @@
-import type { NormalisedPoint } from '../lib/normalise'
+import { encodePointerMessage } from '../protocol/input'
+import type { PointerIntent } from '../protocol/input'
 import type { RejectReason } from '../protocol/types'
 import type { SessionClient } from './client'
 import type { ConnectStep, QualityPriority, SessionState, SessionStats } from './types'
@@ -49,6 +50,22 @@ export interface WsSessionClient extends SessionClient {
   pairWithCode(code: string): Promise<PairedDevice>
 }
 
+/**
+ * One callback per animation frame, which is the natural rate for input: the
+ * remote screen cannot show a cursor position more often than it paints.
+ *
+ * Falls back to a timer where there is no rAF — jsdom under test, and a
+ * backgrounded tab, where rAF stops firing entirely and a held drag would
+ * otherwise never see its last move.
+ */
+function schedule(callback: () => void): void {
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => callback())
+    return
+  }
+  setTimeout(callback, 16)
+}
+
 function defaultUrl(): string {
   if (typeof location === 'undefined') return 'ws://localhost:8080/ws'
   return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
@@ -82,6 +99,16 @@ function isDeviceId(value: string): boolean {
   return DEVICE_ID_PATTERN.test(value)
 }
 
+/**
+ * This phone's own id, once it has registered. Null before the first
+ * successful registration — Settings shows it so a support conversation has
+ * something to quote, and it is read here rather than re-deriving the storage
+ * key somewhere else.
+ */
+export function getPhoneDeviceId(): string | null {
+  return readStorage(DEVICE_ID_KEY)
+}
+
 function steps(activeIndex: number): ConnectStep[] {
   return LADDER.map((step, i) => ({
     ...step,
@@ -104,9 +131,31 @@ interface Waiter {
   timer: ReturnType<typeof setTimeout>
 }
 
+/**
+ * STUN servers used when the caller does not supply its own.
+ *
+ * Deliberately three independent operators, and deliberately all on port
+ * 3478. Networks that filter outbound UDP tend to permit the registered STUN
+ * port and drop everything else, so Google's usual :19302 is unreachable on a
+ * fair number of public hotspots while the very same host answers on :3478.
+ * Spreading across vendors covers the unrelated failure of one being down.
+ *
+ * The browser queries all of them and keeps whatever comes back, so the cost
+ * of the extra entries is a couple of duplicate reflexive candidates.
+ *
+ * None of this rescues a network that blocks UDP outright, or a pair where
+ * either side sits behind a symmetric NAT — those need a TURN relay, which is
+ * still outstanding (see docs/system-design.md §2.2).
+ */
+const DEFAULT_STUN_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.l.google.com:3478' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+]
+
 export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   const url = options.url ?? defaultUrl()
-  const iceServers = options.iceServers ?? [{ urls: 'stun:stun.l.google.com:19302' }]
+  const iceServers = options.iceServers ?? DEFAULT_STUN_SERVERS
 
   let state: SessionState = initialSessionState()
   const listeners = new Set<(s: SessionState) => void>()
@@ -121,6 +170,20 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   // means the server opens one session and refuses the other as
   // `alreadyInSession` — leaving the desktop streaming to a rejected viewer.
   let attempt = 0
+  // The input channel, its sequence stream, and the one move waiting for the
+  // next frame. See sendPointer().
+  let inputChannel: RTCDataChannel | null = null
+  let inputSeq = 0
+  let pendingMove: PointerIntent | null = null
+  let moveScheduled = false
+  // Candidates that arrived before the offer was applied. addIceCandidate
+  // throws until a remote description is in place, and the desktop trickles
+  // its host candidate microseconds after the offer — through a tunnel the
+  // two land in the same event-loop turn, so the candidate dropped is exactly
+  // the one a same-network session depends on. Held here until the offer is
+  // in, then replayed in arrival order.
+  let pendingCandidates: RTCIceCandidateInit[] = []
+
   let statsTimer: ReturnType<typeof setInterval> | undefined
   let previousStats: { bytes: number; frames: number; decodeMs: number; at: number } | null = null
   let disposed = false
@@ -266,7 +329,7 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
         break
 
       case 'iceCandidate':
-        void pc?.addIceCandidate({
+        acceptCandidate({
           candidate: String(message.candidate),
           sdpMid: message.sdpMid == null ? undefined : String(message.sdpMid),
           sdpMLineIndex:
@@ -293,6 +356,17 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     const connection = new RTCPeerConnection({ iceServers })
     pc = connection
 
+    // A STUN/TURN server we cannot reach fails silently otherwise: gathering
+    // just yields no reflexive candidate and the session dies ~30s later as a
+    // generic connection failure. Naming the server that refused is the
+    // difference between a five-minute diagnosis and an afternoon of it.
+    connection.onicecandidateerror = (event) => {
+      const error = event as RTCPeerConnectionIceErrorEvent
+      console.warn(
+        `[ice] ${error.url ?? 'unknown server'} failed: ${error.errorCode} ${error.errorText}`,
+      )
+    }
+
     connection.onicecandidate = (event) => {
       if (!event.candidate || !sessionId) return
       send({
@@ -302,6 +376,17 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
         sdpMid: event.candidate.sdpMid,
         sdpMLineIndex: event.candidate.sdpMLineIndex,
       })
+    }
+
+    // The desktop creates the input channel, because it is the offerer and an
+    // answerer cannot add an m-line the offer did not carry. So this side waits
+    // for it rather than calling createDataChannel().
+    connection.ondatachannel = (event) => {
+      if (event.channel.label !== 'input') {
+        event.channel.close()
+        return
+      }
+      attachInputChannel(event.channel)
     }
 
     // The whole point of the exercise: the desktop's video track arrives here.
@@ -331,9 +416,65 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     }
   }
 
+  function attachInputChannel(channel: RTCDataChannel) {
+    inputChannel = channel
+    // A fresh channel restarts the sequence stream at 1; the host resets its
+    // own gate when the old one closes, so the two agree.
+    inputSeq = 0
+    pendingMove = null
+
+    channel.onclose = () => {
+      if (inputChannel === channel) inputChannel = null
+    }
+  }
+
+  function sendInput(intent: PointerIntent) {
+    if (!inputChannel || inputChannel.readyState !== 'open') return
+    try {
+      inputChannel.send(encodePointerMessage(intent, ++inputSeq, Date.now()))
+    } catch {
+      // The channel closed between the check and the send. Input is a stream
+      // of absolute positions, so the next one repairs whatever this one would
+      // have said — there is nothing to retry and nothing to report.
+    }
+  }
+
+  function flushPendingMove() {
+    moveScheduled = false
+    const move = pendingMove
+    pendingMove = null
+    if (move) sendInput(move)
+  }
+
+  /** One trickled candidate from the desktop, queued if it is too early. */
+  function acceptCandidate(init: RTCIceCandidateInit) {
+    const connection = pc
+    if (!connection) return
+    if (!connection.remoteDescription) {
+      pendingCandidates.push(init)
+      return
+    }
+    void connection.addIceCandidate(init).catch((error: unknown) => {
+      // Never fatal on its own — ICE has other pairs to try — but a silent
+      // drop here is indistinguishable from a network with no route, which is
+      // a day of debugging the wrong layer.
+      console.warn(`[ice] rejected remote candidate "${init.candidate ?? ''}":`, error)
+    })
+  }
+
+  function flushPendingCandidates() {
+    const queued = pendingCandidates
+    pendingCandidates = []
+    for (const init of queued) acceptCandidate(init)
+  }
+
   async function acceptOffer(sdp: string) {
     if (!pc || !sessionId) return
     await pc.setRemoteDescription({ type: 'offer', sdp })
+    // Anything that arrived while the description was being applied is legal
+    // now, and has to go in before the answer: the desktop starts its checks
+    // the moment it sees the answer.
+    flushPendingCandidates()
     const answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
     patch({ phase: 'gathering', steps: steps(4) })
@@ -343,10 +484,19 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   function teardownPeer() {
     stopStats()
     previousStats = null
+    if (inputChannel) {
+      inputChannel.onclose = null
+      inputChannel = null
+    }
+    pendingMove = null
+    moveScheduled = false
+    pendingCandidates = []
     if (pc) {
       pc.onicecandidate = null
+      pc.onicecandidateerror = null
       pc.ontrack = null
       pc.onconnectionstatechange = null
+      pc.ondatachannel = null
       pc.close()
       pc = null
     }
@@ -487,8 +637,24 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
       patch({ activeDisplayId: displayId })
     },
 
-    sendPointer(_kind: 'move' | 'down' | 'up', _point: NormalisedPoint) {
-      // M2: the input DataChannel does not exist yet.
+    sendPointer(intent: PointerIntent) {
+      if (intent.kind !== 'move') {
+        // Clicks go immediately, and supersede any move still waiting: the
+        // button message carries its own position, so dropping the move loses
+        // nothing and sending it first would only add a packet.
+        pendingMove = null
+        sendInput(intent)
+        return
+      }
+
+      // Coalesced to one per frame. A phone reports touchmove at up to 120 Hz,
+      // and the extra samples describe positions the finger has already left —
+      // they would cost jitter on the same DTLS transport as the video and buy
+      // nothing, because only the newest position is ever the right one.
+      pendingMove = intent
+      if (moveScheduled) return
+      moveScheduled = true
+      schedule(flushPendingMove)
     },
 
     sendKey(_kind: 'down' | 'up', _code: string, _modifiers: readonly string[]) {

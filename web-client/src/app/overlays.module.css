@@ -130,3 +130,15 @@
   flex-direction: column;
   gap: var(--space-md);
 }
+
+/* The focus target for route changes.
+ *
+ * Every screen inside it is `position: absolute; inset: 0`, so this has to be
+ * a box of exactly that size — anything smaller, or static, and the screens
+ * would anchor somewhere else. `display: contents` would remove the box
+ * entirely and take programmatic focus with it. */
+.main {
+  position: absolute;
+  inset: 0;
+  outline: none;
+}

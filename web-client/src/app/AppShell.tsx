@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Button } from '../components/Button'
 import { EmptyState } from '../components/Feedback'
@@ -45,7 +45,14 @@ function RotateCover() {
   )
 }
 
-function InstallSheet({ onDismiss }: { onDismiss: () => void }) {
+function InstallSheet({
+  onDismiss,
+  onInstall,
+}: {
+  onDismiss: () => void
+  /** Absent in the dev gallery, where there is no real prompt to accept. */
+  onInstall?: () => void
+}) {
   return (
     <>
       <div className={styles.scrim} onClick={onDismiss} />
@@ -63,7 +70,7 @@ function InstallSheet({ onDismiss }: { onDismiss: () => void }) {
           </span>
         </div>
         <div className={styles.sheetActions}>
-          <Button label="Add to home screen" full onClick={onDismiss} />
+          <Button label="Add to home screen" full onClick={onInstall ?? onDismiss} />
           <Button label="Not now" variant="ghost" full onClick={onDismiss} />
         </div>
       </div>
@@ -71,31 +78,96 @@ function InstallSheet({ onDismiss }: { onDismiss: () => void }) {
   )
 }
 
+/** Chrome's deferred install prompt. Not in lib.dom, and absent on iOS entirely. */
+interface InstallPromptEvent extends Event {
+  prompt(): Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
+const DISMISSED_KEY = 'remotehost.installDismissed'
+
+function wasDismissed(): boolean {
+  try {
+    return localStorage.getItem(DISMISSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function rememberDismissed(): void {
+  try {
+    localStorage.setItem(DISMISSED_KEY, '1')
+  } catch {
+    /* storage disabled: the prompt may reappear next launch, which is survivable */
+  }
+}
+
 export function AppShell() {
   const online = useIsOnline()
   const portrait = useIsPortrait()
   const location = useLocation()
   const [installOpen, setInstallOpen] = useState(false)
+  const deferred = useRef<InstallPromptEvent | null>(null)
+  const main = useRef<HTMLDivElement>(null)
 
-  // M5 wires this to a real `beforeinstallprompt`; for now it never fires, so
-  // the sheet is reachable only from the dev gallery.
   useEffect(() => {
     const onPrompt = (event: Event) => {
+      // Chrome shows its own mini-infobar unless the event is preventDefault'd;
+      // holding it lets the app ask at a moment that makes sense instead.
       event.preventDefault()
-      setInstallOpen(true)
+      deferred.current = event as InstallPromptEvent
+      if (!wasDismissed()) setInstallOpen(true)
+    }
+    const onInstalled = () => {
+      deferred.current = null
+      setInstallOpen(false)
     }
     window.addEventListener('beforeinstallprompt', onPrompt)
-    return () => window.removeEventListener('beforeinstallprompt', onPrompt)
+    window.addEventListener('appinstalled', onInstalled)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onPrompt)
+      window.removeEventListener('appinstalled', onInstalled)
+    }
   }, [])
+
+  const install = useCallback(() => {
+    const event = deferred.current
+    setInstallOpen(false)
+    rememberDismissed()
+    if (!event) return
+    deferred.current = null
+    void event.prompt().catch(() => {})
+  }, [])
+
+  const dismiss = useCallback(() => {
+    rememberDismissed()
+    setInstallOpen(false)
+  }, [])
+
+  // A router navigation changes what is on screen without touching focus, so a
+  // screen reader is left parked on the control that was just tapped — on a
+  // screen that no longer exists. Moving focus to the top of the new screen
+  // fixes that, but only where the new screen did not place focus itself:
+  // child effects run before this one, so a screen with an autofocused control
+  // (the pairing code, the rename field) has already claimed it, and taking it
+  // back would mean the keyboard types into nothing. Scroll needs no reset —
+  // every screen owns its scroll container and mounts fresh at the top.
+  useEffect(() => {
+    const active = document.activeElement
+    if (active && active !== document.body && main.current?.contains(active)) return
+    main.current?.focus({ preventScroll: true })
+  }, [location.pathname])
 
   const inSession = location.pathname.startsWith('/session/')
 
   return (
     <>
-      <Outlet />
+      <div ref={main} tabIndex={-1} className={styles.main}>
+        <Outlet />
+      </div>
       {inSession && portrait ? <RotateCover /> : null}
       {!online ? <OfflineCover /> : null}
-      {installOpen ? <InstallSheet onDismiss={() => setInstallOpen(false)} /> : null}
+      {installOpen ? <InstallSheet onDismiss={dismiss} onInstall={install} /> : null}
     </>
   )
 }

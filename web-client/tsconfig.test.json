@@ -10,5 +10,8 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["tests", "e2e"]
+  // src/vite-env.d.ts carries the globals vite injects (__APP_VERSION__). The
+  // app project picks it up from `include: ["src"]`; this one reaches src only
+  // through imports, which do not pull in ambient declaration files.
+  "include": ["tests", "e2e", "src/vite-env.d.ts"]
 }

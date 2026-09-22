@@ -6,6 +6,9 @@ import styles from './Banner.module.css'
 
 export type BannerTone = 'info' | 'warn' | 'error' | 'success'
 
+/* The defaults read as connection conditions, which is what banners were for
+ * originally. The prose pages use the same component for something else, so
+ * the icon can be overridden. */
 const TONE_ICON: Record<BannerTone, IconName> = {
   info: 'wifi',
   warn: 'alert',
@@ -23,17 +26,20 @@ export function Banner({
   title,
   children,
   action,
+  icon,
   className,
 }: {
   tone: BannerTone
   title: string
   children?: ReactNode
   action?: { label: string; onClick: () => void }
+  /** Overrides the tone's default, which assumes a connection condition. */
+  icon?: IconName
   className?: string
 }) {
   return (
     <div className={cn(styles.banner, styles[tone], className)} role="status">
-      <Icon name={TONE_ICON[tone]} size={20} className={styles.icon} />
+      <Icon name={icon ?? TONE_ICON[tone]} size={20} className={styles.icon} />
       <div className={styles.body}>
         <span className={styles.title}>{title}</span>
         {children ? <span className={styles.text}>{children}</span> : null}

@@ -27,21 +27,17 @@ export function PairScan() {
       </div>
 
       <div className={styles.scanNav}>
-        <NavBar title="Pair a computer" onBack={() => navigate('/welcome')} />
+        <NavBar title="Scan a code" onBack={() => navigate('/pair/code')} />
       </div>
 
       <p className={styles.scanHint}>Point the camera at the code on your desktop screen.</p>
 
       <div className={styles.scanFooter}>
-        <Banner tone="info" title="Camera access needed once">
-          Used only to read the pairing code. Nothing is recorded or uploaded.
+        <Banner tone="warn" title="Scanning is not wired up yet">
+          The desktop app does not draw a QR code yet, so there is nothing to point this at. Type
+          the six digits instead — it is the same pairing.
         </Banner>
-        <Button
-          label="Enter the code instead"
-          variant="secondary"
-          full
-          onClick={() => navigate('/pair/code')}
-        />
+        <Button label="Enter the code instead" full onClick={() => navigate('/pair/code')} />
       </div>
     </div>
   )

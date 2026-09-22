@@ -32,6 +32,18 @@ export interface NormalisedPoint {
   ny: number
 }
 
+/**
+ * A point in frame space, **unclamped**, plus whether it landed on the frame.
+ *
+ * Trackpad mode needs this rather than {@link toNormalised}: it works in
+ * deltas, so a finger that slides into a letterbox bar must keep producing
+ * samples — the cursor it is pushing is nowhere near the bar. Direct mode wants
+ * the stricter reading, where a bar touch is not a desktop interaction at all.
+ */
+export interface FramePoint extends NormalisedPoint {
+  inFrame: boolean
+}
+
 export interface Size {
   width: number
   height: number
@@ -72,18 +84,17 @@ export function containFit(element: Size, track: Size): FrameBox | null {
 }
 
 /**
- * Map a client-space point (a pointer event's `clientX`/`clientY`) onto the
- * remote desktop, as a 0…1 fraction of the rendered frame.
+ * Map a client-space point (a pointer event's `clientX`/`clientY`) into frame
+ * space, without clamping and without rejecting the letterbox bars.
  *
- * Returns `null` when the point falls in a letterbox bar, or when no frame has
- * decoded yet. Callers must treat `null` as "not a desktop interaction" and
- * drop the event rather than clamping it — clamping would slide every dead-zone
- * touch onto the nearest edge of the remote screen.
+ * `null` means no frame has decoded yet, so there is nothing to map against.
+ * Everything else is a point plus `inFrame`, and it is the caller's business
+ * which of those it is allowed to act on.
  */
-export function toNormalised(
+export function toFramePoint(
   point: { clientX: number; clientY: number },
   video: { getBoundingClientRect(): DOMRect; videoWidth: number; videoHeight: number },
-): NormalisedPoint | null {
+): FramePoint | null {
   const rect = video.getBoundingClientRect()
   const box = containFit(
     { width: rect.width, height: rect.height },
@@ -97,15 +108,38 @@ export function toNormalised(
   // A touch exactly on the far edge computes to 1 + 2e-16 because offsetX and
   // width do not sum back exactly. Tolerate that much and no more: the bars are
   // tens of pixels wide, so a real dead-zone touch is never within EPSILON.
-  if (nx < -EPSILON || nx > 1 + EPSILON || ny < -EPSILON || ny > 1 + EPSILON) return null
+  const inFrame = nx >= -EPSILON && nx <= 1 + EPSILON && ny >= -EPSILON && ny <= 1 + EPSILON
 
-  return { nx: clamp01(nx), ny: clamp01(ny) }
+  return { nx, ny, inFrame }
+}
+
+/**
+ * Map a client-space point onto the remote desktop, as a 0…1 fraction of the
+ * rendered frame.
+ *
+ * Returns `null` when the point falls in a letterbox bar, or when no frame has
+ * decoded yet. Callers must treat `null` as "not a desktop interaction" and
+ * drop the event rather than clamping it — clamping would slide every dead-zone
+ * touch onto the nearest edge of the remote screen.
+ */
+export function toNormalised(
+  point: { clientX: number; clientY: number },
+  video: { getBoundingClientRect(): DOMRect; videoWidth: number; videoHeight: number },
+): NormalisedPoint | null {
+  const framePoint = toFramePoint(point, video)
+  if (!framePoint || !framePoint.inFrame) return null
+  return { nx: clamp01(framePoint.nx), ny: clamp01(framePoint.ny) }
 }
 
 const EPSILON = 1e-6
 
-function clamp01(value: number): number {
+export function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value
+}
+
+/** Clamped into the frame, for a gesture that began on it and wandered off. */
+export function clampPoint(point: NormalisedPoint): NormalisedPoint {
+  return { nx: clamp01(point.nx), ny: clamp01(point.ny) }
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { Button } from '../components/Button'
-import { EmptyState, InlineWait } from '../components/Feedback'
+import { EmptyState } from '../components/Feedback'
 import type { IconName } from '../components/Icon'
 import { NavBar, Screen, Spacer } from '../components/Screen'
 import type { RejectReason } from '../protocol/types'
@@ -8,13 +8,17 @@ import { rejectReasonBody, rejectReasonTitle } from '../protocol/types'
 
 const PRESENTATION: Record<
   RejectReason,
-  { icon: IconName; tone: 'error' | 'warn' | 'neutral'; watching: boolean }
+  { icon: IconName; tone: 'error' | 'warn' | 'neutral'; retryable: boolean }
 > = {
   // `notPaired` covers unknown, never-paired and revoked alike. The UI must not
   // try to tell them apart — that distinction is deliberately not on the wire.
-  notPaired: { icon: 'lock', tone: 'error', watching: false },
-  desktopOffline: { icon: 'monitor', tone: 'neutral', watching: true },
-  alreadyInSession: { icon: 'phone', tone: 'warn', watching: false },
+  notPaired: { icon: 'lock', tone: 'error', retryable: false },
+  // Both of these clear on their own — the desktop wakes up, or the other
+  // phone hangs up — so the useful action is to ask again. Asking is manual:
+  // nothing pushes presence to this phone yet, so a screen claiming to watch
+  // for it would be watching nothing.
+  desktopOffline: { icon: 'monitor', tone: 'neutral', retryable: true },
+  alreadyInSession: { icon: 'phone', tone: 'warn', retryable: true },
 }
 
 /**
@@ -31,7 +35,7 @@ export function ConnectRejected({
   deviceName?: string
 }) {
   const navigate = useNavigate()
-  const { icon, tone, watching } = PRESENTATION[reason]
+  const { icon, tone, retryable } = PRESENTATION[reason]
 
   return (
     <Screen
@@ -39,34 +43,35 @@ export function ConnectRejected({
       footer={
         <>
           {reason === 'notPaired' ? (
-            <Button label="Pair again" full onClick={() => navigate('/pair/scan')} />
+            <Button label="Pair again" full onClick={() => navigate('/pair/code')} />
+          ) : null}
+          {retryable ? (
+            // navigate(0) reloads this route, which remounts the viewer and so
+            // starts a fresh connectRequest.
+            <Button label="Try again" icon="refresh" full onClick={() => navigate(0)} />
           ) : null}
           <Button
             label="Back to computers"
-            variant={reason === 'notPaired' ? 'ghost' : 'secondary'}
+            variant={reason === 'notPaired' || retryable ? 'ghost' : 'secondary'}
             full
             onClick={() => navigate('/')}
           />
-          <span
-            style={{
-              fontSize: 'var(--type-size-2xs)',
-              lineHeight: '16px',
-              color: 'var(--color-text-disabled)',
-              textAlign: 'center',
-              fontFamily: 'var(--font-mono)',
-            }}
-          >
-            connectRejected · reason: {reason}
-          </span>
         </>
       }
     >
       <NavBar title={deviceName} onBack={() => navigate('/')} />
       <Spacer />
-      <EmptyState icon={icon} tone={tone} title={rejectReasonTitle(reason)}>
+      {/* The wire reason rides on EmptyState's own `code` slot rather than a
+        * hand-styled span in the footer — same information, one less place
+        * that has to know what small-and-quiet looks like. */}
+      <EmptyState
+        icon={icon}
+        tone={tone}
+        title={rejectReasonTitle(reason)}
+        code={`connectRejected · ${reason}`}
+      >
         {rejectReasonBody(reason)}
       </EmptyState>
-      {watching ? <InlineWait>Watching for it to come online</InlineWait> : null}
       <Spacer />
     </Screen>
   )

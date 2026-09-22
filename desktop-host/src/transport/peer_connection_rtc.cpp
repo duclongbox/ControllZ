@@ -11,6 +11,7 @@
 #include <random>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace desktophost {
 namespace {
@@ -114,6 +115,10 @@ public:
                 rtpConfig_ = rtpConfig;
             }
 
+            if (config_.enableInputChannel) {
+                openInputChannel();
+            }
+
             // Generating the offer is what starts ICE gathering.
             pc_->setLocalDescription();
         } catch (const std::exception& e) {
@@ -122,6 +127,42 @@ public:
         }
 
         return Status::ok();
+    }
+
+    /// THE INVARIANT (CLAUDE.md): input travels unordered and unreliable, on
+    /// its own channel, never multiplexed with video. Ordered delivery would
+    /// make one lost packet stall every sample behind it, and retransmits would
+    /// replay a coordinate that is already wrong by the time it lands — for a
+    /// 120 Hz stream of absolute positions, the next sample is always a better
+    /// answer than a resend of the last one.
+    ///
+    /// Created before setLocalDescription() so the SCTP m-line is in the offer.
+    void openInputChannel() {
+        rtc::DataChannelInit init;
+        init.reliability.unordered = true;
+        init.reliability.maxRetransmits = 0;  // exclusive with maxPacketLifeTime
+
+        auto channel = pc_->createDataChannel(config_.inputChannelLabel, init);
+
+        channel->onMessage([this](rtc::message_variant message) {
+            if (const auto* text = std::get_if<std::string>(&message)) {
+                if (callbacks_.onInputMessage) {
+                    callbacks_.onInputMessage(*text);
+                }
+            }
+            // Binary frames are ignored rather than rejected: the schema is
+            // JSON today, and a binary encoding is a plausible later change
+            // that should not have to touch transport.
+        });
+
+        channel->onClosed([this] {
+            if (callbacks_.onInputChannelClosed) {
+                callbacks_.onInputChannelClosed();
+            }
+        });
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        inputChannel_ = std::move(channel);
     }
 
     void setRemoteDescription(const std::string& sdp, const std::string& type) override {
@@ -183,11 +224,25 @@ public:
 
     void close() override {
         std::shared_ptr<rtc::Track> track;
+        std::shared_ptr<rtc::DataChannel> input;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             track = std::move(track_);
             track_.reset();
             rtpConfig_.reset();
+            input = std::move(inputChannel_);
+            inputChannel_.reset();
+        }
+        if (input != nullptr) {
+            // Drop the handlers before closing: onClosed fires during this
+            // teardown, and the session it would call back into is the one
+            // being destroyed.
+            input->onMessage(nullptr);
+            input->onClosed(nullptr);
+            try {
+                input->close();
+            } catch (const std::exception&) {
+            }
         }
         if (track != nullptr) {
             try {
@@ -215,6 +270,7 @@ private:
     std::mutex mutex_;
     std::shared_ptr<rtc::Track> track_;
     std::shared_ptr<rtc::RtpPacketizationConfig> rtpConfig_;
+    std::shared_ptr<rtc::DataChannel> inputChannel_;
 
     // Only the sending thread reads or writes this.
     std::optional<int64_t> baseUs_;

@@ -1,17 +1,20 @@
 {
   "name": "web-client",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tunnel": "TUNNEL=1 vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "generate": "node ../shared/scripts/generate-ts.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tunnel": "ngrok http 5173",
+    "tunnel:preview": "ngrok http 4173"
   },
   "dependencies": {
     "react": "^19.2.8",

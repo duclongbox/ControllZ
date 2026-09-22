@@ -72,6 +72,36 @@ That is not laziness — distinguishing them would turn either message into an
 oracle for enumerating which deviceIds exist (system-design.md §2.5). Clients
 must not try to infer the difference.
 
+## Input catalog — the data plane
+
+`schemas/input/` is a **separate catalog** (`schemas/input/catalog.json`) for
+messages that travel phone → desktop on the WebRTC input DataChannel. It is
+deliberately not part of `schemas/catalog.json`: that one mirrors the sealed
+`SignalingMessage` hierarchy, and `signaling-server` never sees an input
+message. Listing them together would imply a parity the server does not have —
+and would imply input bytes pass through our servers, which is the one thing the
+architecture promises they never do.
+
+| Type | Fields | Notes |
+|---|---|---|
+| `pointerMove` | `seq, t, nx, ny, buttons` | coalesced to one per animation frame; stale-droppable |
+| `pointerDown` | + `button, clickCount` | `clickCount` is decided by the phone |
+| `pointerUp` | + `button, clickCount` | orphan ups synthesise a press host-side |
+
+Two conventions here differ from the control plane above, both for the same
+reason — this channel is **unordered and unreliable**:
+
+- **Timestamps are epoch ms, not ISO-8601.** `t` is a diagnostic on a 120 Hz
+  stream; a 24-byte string per sample to express something never used for
+  ordering would be waste.
+- **Every message is absolute and self-contained** — position *and* the full
+  button mask, never a delta. A lost packet must degrade to a late repair, not
+  to permanently wrong state. The host reconciles its held buttons against
+  `buttons` on every message, which is how a lost `pointerUp` heals.
+
+Deferred, and absent from the catalog until they exist: `scroll`, `keyDown` /
+`keyUp`.
+
 ## REST API
 
 `signaling-server` also exposes a small REST surface for things that do not

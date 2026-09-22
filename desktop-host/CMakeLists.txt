@@ -26,7 +26,11 @@ add_library(desktophost_core STATIC
     src/version.cpp
     src/encode/annex_b.cpp
     src/transport/peer_connection_rtc.cpp
+    src/transport/mdns_candidate.cpp
     src/signaling/signaling_client_ws.cpp
+    src/input/input_protocol.cpp
+    src/input/input_router.cpp
+    src/input/pointer_mapping.cpp
 )
 
 target_include_directories(desktophost_core PUBLIC include)
@@ -44,6 +48,9 @@ if(APPLE)
         src/capture/screen_capturer_mac.mm
         src/capture/test_pattern_capturer_mac.cpp
         src/encode/video_encoder_vt.mm
+        # Plain C++, unlike capture and encode: CGEvent and the Accessibility
+        # trust check are C APIs, so this backend needs no Objective-C.
+        src/input/input_injector_mac.cpp
     )
 
     # ARC for the Objective-C objects. CoreFoundation types (CVPixelBuffer,
@@ -61,6 +68,9 @@ if(APPLE)
         "-framework CoreMedia"
         "-framework CoreVideo"
         "-framework CoreGraphics"
+        # AXIsProcessTrustedWithOptions — the Accessibility grant that
+        # CGEventPost requires.
+        "-framework ApplicationServices"
         "-framework CoreFoundation"
         "-framework Foundation"
     )
@@ -70,6 +80,7 @@ else()
     target_sources(desktophost_core PRIVATE
         src/capture/screen_capturer_unsupported.cpp
         src/encode/video_encoder_unsupported.cpp
+        src/input/input_injector_unsupported.cpp
     )
 endif()
 
