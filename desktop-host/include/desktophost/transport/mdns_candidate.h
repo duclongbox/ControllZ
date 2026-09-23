@@ -9,7 +9,8 @@ namespace desktophost {
 /// Resolves a hostname to a numeric address, or returns empty on failure.
 using HostResolver = std::function<std::string(const std::string& host)>;
 
-/// The system resolver. `.local` names go to mDNSResponder on macOS.
+/// The system resolver. `.local` names go to mDNSResponder on macOS and to the
+/// DNS Client service's built-in mDNS resolver on Windows 10+.
 ///
 /// Blocks for as long as resolution takes, so callers on a thread that must
 /// stay responsive — the signaling socket's, for one — hand this to a worker.

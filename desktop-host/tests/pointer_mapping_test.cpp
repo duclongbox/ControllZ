@@ -83,3 +83,38 @@ TEST_CASE("degenerate bounds and non-finite coordinates do not produce garbage")
     CHECK(mapped.x == Approx(0.0));
     CHECK(mapped.y == Approx(0.0));
 }
+
+// toAbsoluteInput: Windows SendInput's 0…65535 virtual-desktop space.
+
+namespace {
+
+/// What Windows does with the value: truncate n * extent / 65536.
+long long pixelWindowsLandsOn(int32_t n, long long origin, long long extent) {
+    return origin + (static_cast<long long>(n) * extent) / 65536;
+}
+
+}  // namespace
+
+TEST_CASE("toAbsoluteInput reaches every pixel exactly") {
+    using desktophost::toAbsoluteInput;
+    // A 1920 primary with a 2560 monitor to its left: the virtual desktop
+    // starts at -2560, which is the layout where off-by-one lands on the
+    // neighbour.
+    constexpr long long kOrigin = -2560;
+    constexpr long long kExtent = 2560 + 1920;
+    for (long long x = kOrigin; x < kOrigin + kExtent; ++x) {
+        const int32_t n = toAbsoluteInput(static_cast<double>(x), kOrigin, kExtent);
+        REQUIRE(n >= 0);
+        REQUIRE(n <= 65535);
+        REQUIRE(pixelWindowsLandsOn(n, kOrigin, kExtent) == x);
+    }
+}
+
+TEST_CASE("toAbsoluteInput truncates fractions and clamps out-of-range input") {
+    using desktophost::toAbsoluteInput;
+    CHECK(toAbsoluteInput(959.9, 0, 1920) == toAbsoluteInput(959.0, 0, 1920));
+    CHECK(toAbsoluteInput(-5.0, 0, 1920) == 0);
+    CHECK(toAbsoluteInput(5000.0, 0, 1920) == 65535);
+    CHECK(toAbsoluteInput(std::numeric_limits<double>::quiet_NaN(), 0, 1920) == 0);
+    CHECK(toAbsoluteInput(10.0, 0, 0) == 0);
+}

@@ -60,6 +60,10 @@ void onSignal(int) { g_interrupted.store(true); }
 std::string defaultIdentityPath() {
     const char* home = std::getenv("HOME");
     if (home == nullptr) {
+        // Windows does not set HOME; USERPROFILE is its equivalent.
+        home = std::getenv("USERPROFILE");
+    }
+    if (home == nullptr) {
         return "desktop-identity.json";
     }
     return std::string(home) + "/.remotehost/desktop-identity.json";
@@ -108,10 +112,11 @@ void printUsage() {
         "  --bitrate <bps>     target bitrate (default: 8000000)\n"
         "  --width <px>        max capture width (default: 1920)\n"
         "  --height <px>       max capture height (default: 1080)\n"
-        "  --display <id>      CGDirectDisplayID, 0 for main (default: 0)\n"
+        "  --display <id>      display to capture, 0 for main (default: 0). macOS:\n"
+        "                      CGDirectDisplayID. Windows: monitor number, from 1\n"
         "  --no-cursor         do not composite the mouse cursor\n"
         "  --test-pattern      encode a synthetic pattern instead of the screen\n"
-        "                      (needs no Screen Recording grant; combine with\n"
+        "                      (needs no capture permission; combine with\n"
         "                      --serve to test the browser path on its own)\n"
         "  --help              this message\n",
         desktophost::version());
@@ -314,7 +319,7 @@ int runRecord(const Options& options) {
     if (frameCount == 0) {
         std::fprintf(stderr,
                      "no frames were encoded. If the screen was completely static this is "
-                     "expected; otherwise check the Screen Recording permission.\n");
+                     "expected; otherwise check the Screen Recording permission (macOS).\n");
         return 1;
     }
 
@@ -740,7 +745,13 @@ int main(int argc, char** argv) {
     // Serve mode prints a pairing code and then waits, so its output has to
     // appear as it happens even when piped to a log or a pager — block
     // buffering would hold the code back until the process exits.
+#if defined(_WIN32)
+    // The MSVC runtime has no line buffering (_IOLBF means full buffering) and
+    // treats a zero size as an invalid parameter, which aborts the process.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+#else
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
+#endif
 
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);

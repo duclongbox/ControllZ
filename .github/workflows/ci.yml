@@ -73,3 +73,33 @@ jobs:
       - name: Test
         working-directory: desktop-host
         run: ctest --preset release
+
+  desktop-host-windows:
+    name: desktop-host (Windows)
+    # Build + unit tests. GitHub's Windows runners have no GPU, so the encoder
+    # tests skip themselves (no hardware H.264 encoder) and real capture is
+    # never exercised here — those need a real Windows machine.
+    runs-on: windows-latest
+    env:
+      # The runner image ships vcpkg; the preset's toolchain reads VCPKG_ROOT.
+      VCPKG_ROOT: C:/vcpkg
+    steps:
+      - uses: actions/checkout@v4
+      # Same reasoning as the macOS job's cache, plus OpenSSL: vcpkg's manifest
+      # mode builds it into vcpkg_installed/, which takes minutes cold.
+      - name: Cache FetchContent and vcpkg dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            desktop-host/build/windows-release/_deps
+            desktop-host/build/windows-release/vcpkg_installed
+          key: ${{ runner.os }}-deps-${{ hashFiles('desktop-host/cmake/Dependencies.cmake', 'desktop-host/vcpkg.json') }}
+      - name: Configure
+        working-directory: desktop-host
+        run: cmake --preset windows-release
+      - name: Build
+        working-directory: desktop-host
+        run: cmake --build --preset windows-release
+      - name: Test
+        working-directory: desktop-host
+        run: ctest --preset windows-release

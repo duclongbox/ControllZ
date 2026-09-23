@@ -34,4 +34,20 @@ ScreenPoint mapToScreen(double nx, double ny, const DisplayBounds& bounds) {
     };
 }
 
+int32_t toAbsoluteInput(double coordinate, double origin, double extent) {
+    if (!std::isfinite(coordinate) || !(extent >= 1.0)) {
+        return 0;
+    }
+    constexpr int64_t kScale = 65536;
+    constexpr int64_t kMax = 65535;
+    const auto pixel = static_cast<int64_t>(std::floor(coordinate - origin));
+    const auto span = static_cast<int64_t>(extent);
+    if (pixel <= 0) {
+        return 0;
+    }
+    // Ceiling division: the smallest n whose truncated inverse is `pixel`.
+    const int64_t n = (pixel * kScale + span - 1) / span;
+    return static_cast<int32_t>(n > kMax ? kMax : n);
+}
+
 }  // namespace desktophost

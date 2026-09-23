@@ -1,0 +1,8 @@
+{
+  "name": "desktop-host",
+  "version-string": "0.1.0",
+  "description": "Windows only: OpenSSL for libdatachannel's DTLS. macOS uses Homebrew's openssl@3 and never reads this file.",
+  "dependencies": [
+    "openssl"
+  ]
+}

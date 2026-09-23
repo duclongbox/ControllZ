@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include "desktophost/capture/screen_capturer.h"
@@ -15,8 +16,15 @@ namespace desktophost {
 /// fastest way to tell a capture problem apart from an encode problem when the
 /// output looks wrong.
 ///
-/// The buffers are IOSurface-backed like the real ones, so the encoder sees the
-/// same kind of input it will see in production.
+/// The buffers are the same kind the real capturer produces (IOSurface-backed
+/// on macOS, D3D11 textures on the shared device on Windows), so the encoder
+/// sees the input it will see in production.
 std::unique_ptr<IScreenCapturer> makeTestPatternCapturer(const CaptureConfig& config);
+
+/// One synthetic NV12 frame of that same kind, flat grey at a luma level that
+/// changes with `index` so consecutive frames are real deltas. For feeding an
+/// encoder directly with chosen timestamps, which the capturer (wall-clock
+/// timestamps) cannot do. Returns an invalid frame on allocation failure.
+PlatformFrame makeTestPatternFrame(int width, int height, int index, int64_t ptsUs);
 
 }  // namespace desktophost

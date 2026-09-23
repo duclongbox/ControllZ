@@ -45,4 +45,29 @@ using ParameterSets = std::vector<std::vector<std::byte>>;
 bool buildFrame(const ParameterSets& parameterSets, std::span<const std::byte> avcc,
                 int nalLengthSize, std::vector<std::byte>& out);
 
+/// The most recent SPS and PPS seen in an encoder's output, without start
+/// codes. Lives as long as the encoder session does.
+struct ParameterSetCache {
+    std::vector<std::byte> sps;
+    std::vector<std::byte> pps;
+};
+
+/// Rewrites an encoder's Annex-B output into the shape the rest of the
+/// pipeline expects, for encoders that already emit Annex-B (Media Foundation)
+/// rather than AVCC (VideoToolbox).
+///
+/// Such encoders put SPS/PPS in-band, but whether they repeat them before
+/// *every* IDR is up to the vendor — and a keyframe without them is one a new
+/// viewer cannot start decoding from. So parameter sets are cached as they go
+/// past and re-emitted, SPS then PPS, at the front of every frame containing
+/// an IDR slice, and dropped from every other frame. Access unit delimiters
+/// are dropped too: RTP carries frame boundaries itself.
+///
+/// Accepts 3- and 4-byte start codes; always writes 4-byte ones. Replaces the
+/// contents of `out` and sets `isKeyframe` from the NAL types present, not
+/// from encoder metadata. Returns false, leaving `out` untouched, when there
+/// is no NAL unit at all or an IDR arrives before any SPS/PPS has been seen.
+bool normalizeFrame(std::span<const std::byte> annexB, ParameterSetCache& cache,
+                    std::vector<std::byte>& out, bool& isKeyframe);
+
 }  // namespace desktophost::annexb
