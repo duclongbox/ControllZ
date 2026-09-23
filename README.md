@@ -62,8 +62,8 @@ npm run tunnel                       # = ngrok http 5173
 # ngrok's free tier allows 20k requests/month, and the dev server spends
 # hundreds of them per phone reload (one request per module). For a long phone
 # session, tunnel a production build instead — a handful of requests:
-npm run build && npm run preview     # then, in another shell:
-npm run tunnel:preview               # = ngrok http 4173
+npm run build && npm run preview     
+npm run tunnel:preview               
 
 # restart validated devices:
 rm ~/.remotehost/desktop-identity.json

@@ -92,8 +92,3 @@ one is scoped deliberately to keep sessions reviewable. -->
 - Don't add a new runtime dependency to `desktop-host/` without checking it
   supports the GPU-resident capture path (no library that forces a CPU copy).
 
-## Useful commands
-- `npm run dev` (in `web-client/`)       — local dev server
-- `npm run test:e2e` (in `web-client/`)  — Playwright end-to-end tests
-- `./mvnw spring-boot:run` (in `signaling-server/`) — run signaling server locally
-- `cmake --build build` (in `desktop-host/`) — build the desktop host
