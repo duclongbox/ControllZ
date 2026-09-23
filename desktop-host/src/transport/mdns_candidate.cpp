@@ -1,10 +1,15 @@
 #include "desktophost/transport/mdns_candidate.h"
 
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <netdb.h>
 #include <sys/socket.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -61,6 +66,18 @@ std::string join(const std::vector<std::string>& fields) {
 }  // namespace
 
 std::string resolveHostAddress(const std::string& host) {
+#if defined(_WIN32)
+    // getaddrinfo fails with WSANOTINITIALISED until something has started
+    // Winsock. libdatachannel does, but only once a peer connection exists, and
+    // this must not depend on call order. Reference-counted, never undone.
+    static const bool winsockReady = [] {
+        WSADATA data{};
+        return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    }();
+    if (!winsockReady) {
+        return {};
+    }
+#endif
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;

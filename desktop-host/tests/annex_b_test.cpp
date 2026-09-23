@@ -9,6 +9,8 @@
 using desktophost::annexb::appendAvcc;
 using desktophost::annexb::appendNal;
 using desktophost::annexb::buildFrame;
+using desktophost::annexb::normalizeFrame;
+using desktophost::annexb::ParameterSetCache;
 using desktophost::annexb::ParameterSets;
 
 namespace {
@@ -126,4 +128,72 @@ TEST_CASE("buildFrame leaves the output untouched when the payload is malformed"
 TEST_CASE("buildFrame rejects an empty parameter set", "[annexb]") {
     std::vector<std::byte> out;
     REQUIRE_FALSE(buildFrame({{}}, bytes({0x00, 0x00, 0x00, 0x01, 0x65}), 4, out));
+}
+
+// normalizeFrame: Media Foundation encoders emit Annex-B with parameter sets
+// in-band, but only some vendors repeat them before every IDR. A keyframe
+// without them is one a new viewer cannot join at, and it fails silently.
+
+TEST_CASE("normalizeFrame orders in-band parameter sets ahead of the IDR", "[annexb]") {
+    // AUD, SPS, PPS, IDR — with a mix of 3- and 4-byte start codes.
+    const auto in = bytes({0x00, 0x00, 0x00, 0x01, 0x09, 0xF0,        // AUD
+                           0x00, 0x00, 0x01, 0x67, 0x42,              // SPS
+                           0x00, 0x00, 0x00, 0x01, 0x68, 0xCE,        // PPS
+                           0x00, 0x00, 0x01, 0x65, 0x88, 0x84});      // IDR
+    ParameterSetCache cache;
+    std::vector<std::byte> out;
+    bool isKeyframe = false;
+    REQUIRE(normalizeFrame(in, cache, out, isKeyframe));
+    CHECK(isKeyframe);
+    CHECK(out == bytes({0x00, 0x00, 0x00, 0x01, 0x67, 0x42,
+                        0x00, 0x00, 0x00, 0x01, 0x68, 0xCE,
+                        0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84}));
+    CHECK(cache.sps == bytes({0x67, 0x42}));
+    CHECK(cache.pps == bytes({0x68, 0xCE}));
+}
+
+TEST_CASE("normalizeFrame re-inserts cached parameter sets on a bare IDR", "[annexb]") {
+    ParameterSetCache cache{bytes({0x67, 0x42}), bytes({0x68, 0xCE})};
+    std::vector<std::byte> out;
+    bool isKeyframe = false;
+    REQUIRE(normalizeFrame(bytes({0x00, 0x00, 0x00, 0x01, 0x65, 0x11}), cache, out, isKeyframe));
+    CHECK(isKeyframe);
+    CHECK(out == bytes({0x00, 0x00, 0x00, 0x01, 0x67, 0x42,
+                        0x00, 0x00, 0x00, 0x01, 0x68, 0xCE,
+                        0x00, 0x00, 0x00, 0x01, 0x65, 0x11}));
+}
+
+TEST_CASE("normalizeFrame keeps delta frames free of parameter sets", "[annexb]") {
+    ParameterSetCache cache{bytes({0x67, 0x42}), bytes({0x68, 0xCE})};
+    const auto in = bytes({0x00, 0x00, 0x00, 0x01, 0x09, 0x30,
+                           0x00, 0x00, 0x00, 0x01, 0x67, 0x4D,   // SPS on a delta frame
+                           0x00, 0x00, 0x00, 0x01, 0x41, 0x9A});
+    std::vector<std::byte> out;
+    bool isKeyframe = true;
+    REQUIRE(normalizeFrame(in, cache, out, isKeyframe));
+    CHECK_FALSE(isKeyframe);
+    CHECK(out == bytes({0x00, 0x00, 0x00, 0x01, 0x41, 0x9A}));
+    // Still remembered, for the next IDR.
+    CHECK(cache.sps == bytes({0x67, 0x4D}));
+}
+
+TEST_CASE("normalizeFrame trims trailing zero bytes between NAL units", "[annexb]") {
+    ParameterSetCache cache;
+    const auto in = bytes({0x00, 0x00, 0x01, 0x41, 0x9A, 0x00, 0x00,
+                           0x00, 0x00, 0x01, 0x41, 0x9B});
+    std::vector<std::byte> out;
+    bool isKeyframe = false;
+    REQUIRE(normalizeFrame(in, cache, out, isKeyframe));
+    CHECK(out == bytes({0x00, 0x00, 0x00, 0x01, 0x41, 0x9A,
+                        0x00, 0x00, 0x00, 0x01, 0x41, 0x9B}));
+}
+
+TEST_CASE("normalizeFrame refuses an IDR it cannot make decodable", "[annexb]") {
+    ParameterSetCache cache;
+    std::vector<std::byte> out = bytes({0x01});
+    bool isKeyframe = false;
+    CHECK_FALSE(normalizeFrame(bytes({0x00, 0x00, 0x00, 0x01, 0x65, 0x11}), cache, out,
+                               isKeyframe));
+    CHECK(out == bytes({0x01}));
+    CHECK_FALSE(normalizeFrame(bytes({0x12, 0x34}), cache, out, isKeyframe));
 }

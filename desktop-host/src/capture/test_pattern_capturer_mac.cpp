@@ -31,6 +31,10 @@ CVPixelBufferRef createNv12Buffer(int width, int height) {
     return buffer;
 }
 
+void releasePixelBuffer(void* handle) noexcept {
+    CVPixelBufferRelease(static_cast<CVPixelBufferRef>(handle));
+}
+
 /// A bar sweeping horizontally over a gradient: enough real motion that the
 /// encoder produces non-trivial P-frames rather than near-empty ones.
 void drawPattern(CVPixelBufferRef buffer, int frameIndex) {
@@ -92,11 +96,7 @@ public:
                 const auto ptsUs =
                     std::chrono::duration_cast<std::chrono::microseconds>(now - started).count();
 
-                onFrame(PlatformFrame(buffer,
-                                      [](void* handle) noexcept {
-                                          CVPixelBufferRelease(static_cast<CVPixelBufferRef>(handle));
-                                      },
-                                      width_, height_, ptsUs));
+                onFrame(PlatformFrame(buffer, releasePixelBuffer, width_, height_, ptsUs));
 
                 std::this_thread::sleep_for(interval);
             }
@@ -124,6 +124,23 @@ private:
 };
 
 }  // namespace
+
+PlatformFrame makeTestPatternFrame(int width, int height, int index, int64_t ptsUs) {
+    CVPixelBufferRef buffer = createNv12Buffer(width, height);
+    if (buffer == nullptr) {
+        return PlatformFrame{};
+    }
+    CVPixelBufferLockBaseAddress(buffer, 0);
+    for (size_t plane = 0; plane < 2; ++plane) {
+        auto* base = static_cast<uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(buffer, plane));
+        const size_t stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane);
+        const size_t rows = CVPixelBufferGetHeightOfPlane(buffer, plane);
+        const int value = plane == 0 ? 16 + (index * 7) % 200 : 128;
+        std::memset(base, value, stride * rows);
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, 0);
+    return PlatformFrame(buffer, releasePixelBuffer, width, height, ptsUs);
+}
 
 std::unique_ptr<IScreenCapturer> makeTestPatternCapturer(const CaptureConfig& config) {
     return std::make_unique<TestPatternCapturer>(config);

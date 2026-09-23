@@ -70,9 +70,9 @@ TEST_CASE("test pattern capturer stop() waits for an in-flight callback", "[capt
     checkStopWaitsForInFlightCallback(*capturer);
 }
 
-// Hidden: needs the Screen Recording grant, which no CI runner has. Run it from
-// a terminal that holds the grant with `desktophost_tests "[screen]"`.
-TEST_CASE("ScreenCaptureKit capturer stop() waits for an in-flight callback", "[.][screen]") {
+// Hidden: needs a real display (and on macOS the Screen Recording grant), which
+// no CI runner has. Run it by hand with `desktophost_tests "[screen]"`.
+TEST_CASE("platform screen capturer stop() waits for an in-flight callback", "[.][screen]") {
     auto capturer = makeScreenCapturer(smallConfig());
     REQUIRE(capturer != nullptr);
     checkStopWaitsForInFlightCallback(*capturer);

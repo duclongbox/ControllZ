@@ -4,15 +4,19 @@ cmake_minimum_required(VERSION 3.24)
 # Must be set before project().
 set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version")
 
-# OBJCXX matters: ScreenCaptureKit and VideoToolbox are Objective-C APIs, so the
-# capture and encode modules are .mm files calling into plain C++ elsewhere.
-# Declaring the language now avoids a restructure in M1.
-project(desktop-host VERSION 0.1.0 LANGUAGES CXX OBJCXX)
+project(desktop-host VERSION 0.1.0 LANGUAGES CXX)
+
+# OBJCXX on Apple only: ScreenCaptureKit and VideoToolbox are Objective-C APIs,
+# so the macOS capture and encode modules are .mm files. MSVC has no
+# Objective-C compiler, so declaring it unconditionally fails configure there.
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 20)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)          # libdatachannel requires >= 17
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_OBJCXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # so clangd / IDEA understand the project
 
 include(cmake/Dependencies.cmake)
@@ -74,9 +78,43 @@ if(APPLE)
         "-framework CoreFoundation"
         "-framework Foundation"
     )
+elseif(WIN32)
+    # Same seams, Windows backends. Capture and encode share one D3D11 device
+    # (src/platform/win): a texture belongs to the device that made it, so the
+    # encoder can only read capture's frames — without a CPU copy — on the
+    # same device.
+    target_sources(desktophost_core PRIVATE
+        src/platform/win/d3d_device.cpp
+        src/capture/screen_capturer_win.cpp
+        src/capture/test_pattern_capturer_win.cpp
+        src/encode/video_encoder_mf.cpp
+        src/input/input_injector_win.cpp
+    )
+    target_include_directories(desktophost_core PRIVATE src)
+
+    target_compile_definitions(desktophost_core PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        # Windows 10 1903: the floor for Windows Graphics Capture's
+        # CreateForMonitor and for MFTEnum2's adapter filter.
+        _WIN32_WINNT=0x0A00
+        NTDDI_VERSION=0x0A000007
+    )
+
+    target_link_libraries(desktophost_core PUBLIC
+        d3d11
+        dxgi
+        mfplat
+        mfuuid
+        # CODECAPI_* property GUIDs for ICodecAPI.
+        strmiids
+        # C++/WinRT, for Windows.Graphics.Capture.
+        windowsapp
+        user32
+        ws2_32
+    )
 else()
-    # Keeps the seam compiling on platforms whose backend has not landed yet;
-    # the Windows implementations replace these.
+    # Keeps the seam compiling on platforms without a backend (Linux).
     target_sources(desktophost_core PRIVATE
         src/capture/screen_capturer_unsupported.cpp
         src/encode/video_encoder_unsupported.cpp
@@ -86,6 +124,9 @@ endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(desktophost_core PRIVATE -Wall -Wextra -Wpedantic)
+elseif(MSVC)
+    # /EHsc: C++/WinRT reports failure by throwing winrt::hresult_error.
+    target_compile_options(desktophost_core PRIVATE /W4 /permissive- /EHsc /utf-8 /bigobj)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -93,6 +134,15 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(desktop-host src/main.cpp)
 target_link_libraries(desktop-host PRIVATE desktophost_core)
+
+if(WIN32)
+    # Per-monitor DPI awareness, declared in the manifest rather than set from
+    # main(): it has to be in force before any monitor API runs, and it is what
+    # makes capture sizes and SendInput coordinates physical pixels. Without it
+    # Windows reports scaled sizes and every click on a 150% display misses.
+    target_sources(desktop-host PRIVATE src/platform/win/desktop-host.manifest)
+    target_compile_options(desktop-host PRIVATE /utf-8)
+endif()
 
 if(APPLE)
     # Screen Recording is granted per binary identity, and an unsigned binary

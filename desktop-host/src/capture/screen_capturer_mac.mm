@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 
+#include "desktophost/capture/capture_size.h"
 #include "desktophost/capture/screen_capturer.h"
 
 using desktophost::CaptureConfig;
@@ -36,22 +37,6 @@ struct CaptureSink {
     FrameCallback onFrame;
     CaptureErrorCallback onError;
 };
-
-/// Largest even-dimensioned box with `srcW:srcH` aspect that fits in
-/// `maxW x maxH`. Even because H.264 4:2:0 subsamples chroma by two; aspect
-/// preserving because forcing a 16:10 panel into 1920x1080 stretches it.
-void fitWithin(int srcW, int srcH, int maxW, int maxH, int* outW, int* outH) {
-    if (srcW <= 0 || srcH <= 0) {
-        *outW = maxW & ~1;
-        *outH = maxH & ~1;
-        return;
-    }
-    const double scale = std::min(static_cast<double>(maxW) / srcW, static_cast<double>(maxH) / srcH);
-    int w = static_cast<int>(srcW * (scale < 1.0 ? scale : 1.0));
-    int h = static_cast<int>(srcH * (scale < 1.0 ? scale : 1.0));
-    *outW = std::max(2, w & ~1);
-    *outH = std::max(2, h & ~1);
-}
 
 std::string describe(NSError* error) {
     if (error == nil) {
@@ -184,8 +169,12 @@ public:
                 return contentStatus;
             }
 
-            fitWithin(static_cast<int>(display.width), static_cast<int>(display.height),
-                      config_.maxWidth, config_.maxHeight, &width_, &height_);
+            const desktophost::CaptureSize size =
+                desktophost::fitWithin(static_cast<int>(display.width),
+                                       static_cast<int>(display.height), config_.maxWidth,
+                                       config_.maxHeight);
+            width_ = size.width;
+            height_ = size.height;
 
             SCStreamConfiguration* streamConfig = [[SCStreamConfiguration alloc] init];
             streamConfig.width = static_cast<size_t>(width_);
