@@ -114,9 +114,10 @@ Troubleshooting:
   `cmake --preset windows-release --fresh`.
 - **`vcpkg not found`**: vcpkg is not at `C:\vcpkg` and `VCPKG_ROOT` is not
   set in this window. Run `$env:VCPKG_ROOT = "<path to vcpkg>"` and configure again.
-- **`No CMAKE_CXX_COMPILER could be found`** / **`Visual Studio 17 2022` not
-  found**: the C++ workload of Build Tools is missing. Re-run the second
-  `winget` line.
+- **`No CMAKE_CXX_COMPILER could be found`** / **`could not find any instance
+  of Visual Studio`**: the C++ workload of Build Tools is missing. Re-run the
+  second `winget` line. Any Visual Studio 2022 or newer works: the preset uses
+  whichever version is installed.
 
 ## Target repository structure
 
