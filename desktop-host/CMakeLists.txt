@@ -68,9 +68,19 @@ add_library(desktophost_core STATIC
     src/input/pointer_mapping.cpp
 )
 
+# Static on Windows. The DLL build exports std::vector<std::byte> (rtc::binary)
+# from datachannel.dll, and MSVC then sees that instantiation twice — once
+# imported, once from our own code — and fails with LNK2005. Static also means
+# no datachannel.dll has to sit next to desktop-host.exe and the test runner.
+if(WIN32)
+    set(DESKTOPHOST_DATACHANNEL LibDataChannel::LibDataChannelStatic)
+else()
+    set(DESKTOPHOST_DATACHANNEL LibDataChannel::LibDataChannel)
+endif()
+
 target_include_directories(desktophost_core PUBLIC include)
 target_link_libraries(desktophost_core
-    PUBLIC LibDataChannel::LibDataChannel
+    PUBLIC ${DESKTOPHOST_DATACHANNEL}
     # Private: JSON is an implementation detail of the signaling client and
     # must not leak into the interface headers other packages compile against.
     PRIVATE nlohmann_json::nlohmann_json
