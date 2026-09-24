@@ -4,6 +4,37 @@ cmake_minimum_required(VERSION 3.24)
 # Must be set before project().
 set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version")
 
+# Windows gets OpenSSL from vcpkg (vcpkg.json), which works through a toolchain
+# file that must be known before project(). Located here rather than in the
+# preset because a preset can only read $env{VCPKG_ROOT}, and that is empty in
+# the very window where `setx VCPKG_ROOT` was just run — the preset then points
+# at "/scripts/buildsystems/vcpkg.cmake" and fails with no hint why. Also
+# re-checked when a previous attempt cached a path that does not exist.
+if(CMAKE_HOST_WIN32 AND (NOT CMAKE_TOOLCHAIN_FILE OR NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}"))
+    set(_vcpkg_toolchain "")
+    # VCPKG_INSTALLATION_ROOT: set on GitHub's Windows runners.
+    foreach(_root IN ITEMS "$ENV{VCPKG_ROOT}" "$ENV{VCPKG_INSTALLATION_ROOT}" "C:/vcpkg")
+        if(_root)
+            file(TO_CMAKE_PATH "${_root}" _root)
+            if(EXISTS "${_root}/scripts/buildsystems/vcpkg.cmake")
+                set(_vcpkg_toolchain "${_root}/scripts/buildsystems/vcpkg.cmake")
+                break()
+            endif()
+        endif()
+    endforeach()
+    if(NOT _vcpkg_toolchain)
+        message(FATAL_ERROR
+            "vcpkg not found. Checked VCPKG_ROOT, VCPKG_INSTALLATION_ROOT and C:/vcpkg.\n"
+            "Install it:\n"
+            "  git clone https://github.com/microsoft/vcpkg C:\\vcpkg\n"
+            "  C:\\vcpkg\\bootstrap-vcpkg.bat\n"
+            "or, if it lives elsewhere, set VCPKG_ROOT in this window and reconfigure:\n"
+            "  $env:VCPKG_ROOT = \"D:\\path\\to\\vcpkg\"")
+    endif()
+    set(CMAKE_TOOLCHAIN_FILE "${_vcpkg_toolchain}" CACHE FILEPATH "vcpkg toolchain" FORCE)
+    message(STATUS "Using vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+endif()
+
 project(desktop-host VERSION 0.1.0 LANGUAGES CXX)
 
 # OBJCXX on Apple only: ScreenCaptureKit and VideoToolbox are Objective-C APIs,
