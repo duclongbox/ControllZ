@@ -73,16 +73,20 @@ cd desktop-host && cmake --preset debug && cmake --build --preset debug
 ./build/debug/desktop-host --serve --name "Studio Mac"
 ```
 
-## PowerShell commands (Windows 10 1903+ / 11)
-```bash
-# 1. One-time setup (open a new PowerShell window afterwards)
+## Windows commands (PowerShell, Windows 10 1903+ / 11)
+
+```powershell
+# 1. One-time setup
 winget install Git.Git Kitware.CMake
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 git clone https://github.com/microsoft/vcpkg C:\vcpkg
 C:\vcpkg\bootstrap-vcpkg.bat
+# Optional when vcpkg is at C:\vcpkg (the build finds it there). Needed if it
+# lives elsewhere. setx only affects NEW windows, so set it for this one too:
 setx VCPKG_ROOT C:\vcpkg
+$env:VCPKG_ROOT = "C:\vcpkg"
 
-# 2. Build and test
+# 2. Build and test (the first configure also builds OpenSSL via vcpkg: minutes)
 git clone https://github.com/duclongbox/ControllZ.git
 cd ControllZ\desktop-host
 git checkout feat/windows-host
@@ -92,11 +96,28 @@ ctest --preset windows-release
 
 # 3. Run, one step at a time
 $exe = ".\build\windows-release\RelWithDebInfo\desktop-host.exe"
-& $exe --test-pattern --seconds 5 --record test.h264   # encoder only
-& $exe --seconds 5 --record screen.h264                # real screen capture
+& $exe --test-pattern --seconds 5 --record test.h264          # encoder only
+& $exe --seconds 5 --record screen.h264                       # real screen capture
 & $exe --serve --signaling ws://<signaling-host-ip>:8080/ws   # stream to the phone
-# Allow it through the Windows Firewall when prompted. --display 2 picks the second monitor.
+# Allow it through the Windows Firewall when prompted. --display 2 picks the
+# second monitor.
+
+# restart validated devices:
+Remove-Item $env:USERPROFILE\.remotehost\desktop-identity.json
 ```
+
+Troubleshooting:
+
+- **`Could not find toolchain file: "/scripts/buildsystems/vcpkg.cmake"`**:
+  an older checkout read `VCPKG_ROOT` from the preset, and it was empty in
+  that window. Pull the latest branch, then reconfigure with
+  `cmake --preset windows-release --fresh`.
+- **`vcpkg not found`**: vcpkg is not at `C:\vcpkg` and `VCPKG_ROOT` is not
+  set in this window. Run `$env:VCPKG_ROOT = "<path to vcpkg>"` and configure again.
+- **`No CMAKE_CXX_COMPILER could be found`** / **`could not find any instance
+  of Visual Studio`**: the C++ workload of Build Tools is missing. Re-run the
+  second `winget` line. Any Visual Studio 2022 or newer works: the preset uses
+  whichever version is installed.
 
 ## Target repository structure
 

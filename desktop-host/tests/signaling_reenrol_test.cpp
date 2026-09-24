@@ -2,7 +2,11 @@
 
 #include <rtc/rtc.hpp>
 
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <chrono>
 #include <condition_variable>
@@ -89,12 +93,21 @@ private:
     std::vector<std::string> received_;
 };
 
+/// Keeps concurrent test runs (ctest -j) out of each other's directories.
+long long processId() {
+#if defined(_WIN32)
+    return _getpid();
+#else
+    return ::getpid();
+#endif
+}
+
 /// An identity file in a directory of its own, removed with the fixture.
 class TempIdentity {
 public:
     explicit TempIdentity(const std::string& contents) {
         directory_ = std::filesystem::temp_directory_path() /
-                     ("desktophost-test-" + std::to_string(::getpid()) + "-" +
+                     ("desktophost-test-" + std::to_string(processId()) + "-" +
                       std::to_string(counter_++));
         std::filesystem::create_directories(directory_);
         path_ = directory_ / "desktop-identity.json";

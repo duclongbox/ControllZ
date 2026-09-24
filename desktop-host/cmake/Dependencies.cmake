@@ -51,4 +51,13 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(libdatachannel Catch2 nlohmann_json)
+FetchContent_MakeAvailable(libdatachannel)
+
+# libdatachannel declares option(BUILD_SHARED_LIBS ... ON), which lands in the
+# cache and silently makes every later dependency a shared library too. For
+# Catch2 that is harmless on macOS (rpath finds the dylib) but fatal on
+# Windows, which has no rpath: the test runner exits with 0xC0000135 (DLL not
+# found) the moment catch_discover_tests runs it. A normal variable shadows
+# the cache entry for everything declared below.
+set(BUILD_SHARED_LIBS OFF)
+FetchContent_MakeAvailable(Catch2 nlohmann_json)
