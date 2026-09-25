@@ -54,6 +54,31 @@ TEST_CASE("parses the buttons this milestone does not yet send") {
     CHECK(middle->button == MouseButton::middle);
 }
 
+TEST_CASE("parses a scroll") {
+    const auto message = parsePointerMessage(
+        R"({"type":"scroll","seq":12,"t":1,"nx":0.25,"ny":0.75,"buttons":0,"dx":-12.5,"dy":100})");
+
+    REQUIRE(message.has_value());
+    CHECK(message->action == PointerAction::scroll);
+    CHECK(message->nx == Approx(0.25));
+    CHECK(message->dx == Approx(-12.5));
+    CHECK(message->dy == Approx(100.0));
+}
+
+TEST_CASE("a scroll without deltas, or past the bound, is rejected") {
+    const char* rejected[] = {
+        R"({"type":"scroll","seq":1,"t":1,"nx":0.5,"ny":0.5,"buttons":0,"dy":100})",
+        R"({"type":"scroll","seq":1,"t":1,"nx":0.5,"ny":0.5,"buttons":0,"dx":0})",
+        R"({"type":"scroll","seq":1,"t":1,"nx":0.5,"ny":0.5,"buttons":0,"dx":0,"dy":"100"})",
+        R"({"type":"scroll","seq":1,"t":1,"nx":0.5,"ny":0.5,"buttons":0,"dx":0,"dy":10001})",
+        R"({"type":"scroll","seq":1,"t":1,"nx":0.5,"ny":0.5,"buttons":0,"dx":-1e9,"dy":0})",
+    };
+    for (const char* json : rejected) {
+        INFO(json);
+        CHECK_FALSE(parsePointerMessage(json).has_value());
+    }
+}
+
 TEST_CASE("a missing diagnostic timestamp is tolerated") {
     // `t` is never read for ordering — the two clocks are unsynchronised — so a
     // sender that leaves it out still gets its input injected.

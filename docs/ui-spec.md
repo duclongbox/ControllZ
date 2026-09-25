@@ -67,7 +67,7 @@ CLAUDE.md. Breaking one is a bug, not a style disagreement.
 | `Main` (viewer) | `/session/:id` | M1 | `sdpAnswer`, `iceCandidate` | RTP video track; chrome visible |
 | `ViewerIdle` | `/session/:id` | M1 | — | chrome auto-hidden after 3 s |
 | `ViewerStats` | `/session/:id` | M1 | — | `RTCPeerConnection.getStats()` at 1 Hz |
-| `ViewerInputTrackpad` | `/session/:id` | M2 | `pointerMove/Down/Up` | unordered DataChannel, coalesced per rAF — **built** |
+| `ViewerInputTrackpad` | `/session/:id` | M2 | `pointerMove/Down/Up`, `scroll` | unordered DataChannel, coalesced per rAF (scroll deltas summed) — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown`, `keyUp` | physical `code` + modifier state |
 | `ViewerMonitors` | `/session/:id` | M2 | `setDisplay` | renegotiates, forces an IDR |
 | `ViewerQuality` | `/session/:id` | M4 | `setQualityPriority` | ladder position echoed back |
@@ -174,6 +174,11 @@ On the wire:
 ```json
 { "type": "pointerMove", "seq": 40118, "t": 1757030412, "nx": 0.6183, "ny": 0.4402 }
 ```
+
+A `scroll` carries the same position plus `dx`/`dy` — the one delta on the
+channel, in CSS pixels with a wheel notch normalised to 100. Deltas commute, so
+the host applies every scroll it receives in any order; only its position is
+gated like a move's (`shared/schemas/input/scroll.schema.json`).
 
 On the host, at injection time — against the display's **bounds in the OS's
 global coordinate space**, not the captured frame's pixel dimensions:

@@ -4,6 +4,7 @@
 // APIs, so unlike capture and encode this backend needs no Objective-C.
 #include <ApplicationServices/ApplicationServices.h>
 
+#include <cmath>
 #include <cstdio>
 
 namespace desktophost {
@@ -90,6 +91,37 @@ public:
         post(upEventFor(button), point, toCgButton(button), clickCount);
     }
 
+    void scroll(ScreenPoint point, double dx, double dy) override {
+        // Pixel units, which are what a trackpad produces and what apps scroll
+        // smoothly by. CoreGraphics' signs are the opposite of the DOM's on
+        // both axes: wheel 1 positive scrolls up, wheel 2 positive scrolls
+        // left. The intent is that the direction the user's own browser chose
+        // is the one the Mac shows, i.e. that "natural scrolling" on the host
+        // does not re-invert a synthesised event. Unverified on hardware: if
+        // scrolling runs backwards with natural scrolling on, this is where.
+        pendingX_ -= dx;
+        pendingY_ -= dy;
+        const auto wheelY = static_cast<int32_t>(std::trunc(pendingY_));
+        const auto wheelX = static_cast<int32_t>(std::trunc(pendingX_));
+        if (wheelX == 0 && wheelY == 0) {
+            return;
+        }
+        pendingY_ -= wheelY;
+        pendingX_ -= wheelX;
+
+        CGEventRef event =
+            CGEventCreateScrollWheelEvent2(nullptr, kCGScrollEventUnitPixel, 2, wheelY, wheelX, 0);
+        if (event == nullptr) {
+            return;
+        }
+        // A scroll goes to the window under the event's location, which by
+        // default is wherever the cursor was; setting it pins the scroll to
+        // the point the user's pointer is actually over.
+        CGEventSetLocation(event, CGPointMake(point.x, point.y));
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
+
 private:
     CGDirectDisplayID resolveDisplay() const {
         return displayId_ == 0 ? CGMainDisplayID() : static_cast<CGDirectDisplayID>(displayId_);
@@ -114,6 +146,10 @@ private:
     }
 
     uint32_t displayId_;
+    // Sub-pixel remainder carried to the next scroll. Only touched from
+    // InputRouter, under its lock.
+    double pendingX_ = 0;
+    double pendingY_ = 0;
 };
 
 }  // namespace

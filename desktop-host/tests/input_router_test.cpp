@@ -23,7 +23,7 @@ using desktophost::ScreenPoint;
 namespace {
 
 struct Event {
-    enum class Kind { move, down, up };
+    enum class Kind { move, down, up, scroll };
 
     Kind kind;
     double x = 0;
@@ -31,6 +31,8 @@ struct Event {
     MouseButton button = MouseButton::left;
     int clickCount = 0;
     uint8_t held = 0;
+    double dx = 0;
+    double dy = 0;
 };
 
 class FakeInjector final : public desktophost::IInputInjector {
@@ -50,6 +52,11 @@ public:
 
     void buttonUp(ScreenPoint point, MouseButton button, int clickCount) override {
         events.push_back(Event{Event::Kind::up, point.x, point.y, button, clickCount, 0});
+    }
+
+    void scroll(ScreenPoint point, double dx, double dy) override {
+        events.push_back(
+            Event{Event::Kind::scroll, point.x, point.y, MouseButton::left, 0, 0, dx, dy});
     }
 
     size_t count(Event::Kind kind) const {
@@ -73,6 +80,13 @@ std::string button(const char* type, uint32_t seq, double nx, double ny, int but
            R"(,"t":1,"nx":)" + std::to_string(nx) + R"(,"ny":)" + std::to_string(ny) +
            R"(,"buttons":)" + std::to_string(buttons) + R"(,"button":")" + name +
            R"(","clickCount":)" + std::to_string(clickCount) + "}";
+}
+
+std::string scroll(uint32_t seq, double nx, double ny, double dx, double dy, int buttons = 0) {
+    return R"({"type":"scroll","seq":)" + std::to_string(seq) + R"(,"t":1,"nx":)" +
+           std::to_string(nx) + R"(,"ny":)" + std::to_string(ny) + R"(,"buttons":)" +
+           std::to_string(buttons) + R"(,"dx":)" + std::to_string(dx) + R"(,"dy":)" +
+           std::to_string(dy) + "}";
 }
 
 /// Never the zero time_point: the router reads that as "no message yet" and
@@ -285,4 +299,59 @@ TEST_CASE("unparseable messages are counted, never guessed at") {
     CHECK(injector.events.empty());
     CHECK(router.stats().invalidDropped == 3);
     CHECK(router.stats().applied == 0);
+}
+
+TEST_CASE("a scroll moves the cursor to its position, then scrolls there") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(scroll(1, 0.2, 0.4, -10, 100), kStart);
+
+    REQUIRE(injector.events.size() == 2);
+    CHECK(injector.events[0].kind == Event::Kind::move);
+    CHECK(injector.events[1].kind == Event::Kind::scroll);
+    CHECK(injector.events[1].x == Approx(200.0));
+    CHECK(injector.events[1].y == Approx(200.0));
+    CHECK(injector.events[1].dx == Approx(-10.0));
+    CHECK(injector.events[1].dy == Approx(100.0));
+    CHECK(router.stats().applied == 1);
+}
+
+TEST_CASE("a late scroll still scrolls, but cannot drag the cursor back") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(move(5, 0.8, 0.8), kStart);
+    // Sent before that move. Its distance is still owed to the user; its
+    // position is somewhere the pointer has already left.
+    router.handleMessage(scroll(4, 0.1, 0.1, 0, 100), kStart);
+
+    REQUIRE(injector.events.size() == 2);
+    CHECK(injector.events[1].kind == Event::Kind::scroll);
+    CHECK(injector.events[1].x == Approx(800.0));
+    CHECK(injector.events[1].dy == Approx(100.0));
+    CHECK(router.stats().staleDropped == 0);
+    CHECK(router.stats().staleScrollPositions == 1);
+}
+
+TEST_CASE("a scroll advances the move gate like any newer sample") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(scroll(7, 0.5, 0.5, 0, 100), kStart);
+    router.handleMessage(move(6, 0.1, 0.1), kStart);
+
+    CHECK(injector.count(Event::Kind::move) == 1);
+    CHECK(router.stats().staleDropped == 1);
+}
+
+TEST_CASE("a scroll's button mask repairs a lost release, like a move's") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(button("pointerDown", 1, 0.5, 0.5, 1), kStart);
+    router.handleMessage(scroll(3, 0.5, 0.5, 0, 100, 0), kStart);
+
+    CHECK(router.heldButtons() == 0);
+    CHECK(injector.count(Event::Kind::up) == 1);
 }

@@ -8,7 +8,7 @@
 
 namespace desktophost {
 
-enum class PointerAction { move, down, up };
+enum class PointerAction { move, down, up, scroll };
 
 /// One parsed message from `shared/schemas/input/`.
 ///
@@ -40,6 +40,12 @@ struct PointerMessage {
 
     /// 1 single, 2 double, 3 triple. Decided by the phone.
     int clickCount = 1;
+
+    /// `scroll` only: the sender's CSS pixels, DOM signs (positive dy scrolls
+    /// down), one wheel notch = 100. The one delta on the channel — see
+    /// `shared/schemas/input/scroll.schema.json` for why that is safe.
+    double dx = 0;
+    double dy = 0;
 };
 
 /// Parses one input-channel message. Returns nullopt for anything malformed,

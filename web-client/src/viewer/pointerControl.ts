@@ -17,7 +17,7 @@
 import { clamp01, clampPoint } from '../lib/normalise'
 import type { FramePoint, NormalisedPoint } from '../lib/normalise'
 import { BUTTON_MASK } from '../protocol/input'
-import type { PointerIntent } from '../protocol/input'
+import type { PointerButton, PointerIntent } from '../protocol/input'
 import type { PointerMode } from '../session/types'
 
 /** One pointer event from the stage, already mapped into frame space. */
@@ -27,6 +27,21 @@ export interface StagePointerSample {
   frame: FramePoint | null
   /** `event.timeStamp`, ms. */
   at: number
+  /** `event.pointerType`. Absent is read as touch, which is what the gestures were built for. */
+  pointerType?: string
+  /**
+   * `event.buttons` — the full mask held after this event. Only the mouse path
+   * reads it; a finger has no buttons to report.
+   */
+  buttons?: number
+}
+
+/** One wheel event from the stage, delta already in wire pixels. */
+export interface StageWheelSample {
+  /** Null until a frame has decoded. */
+  frame: FramePoint | null
+  dx: number
+  dy: number
 }
 
 export interface PointerControlOptions {
@@ -40,6 +55,10 @@ export interface PointerControlOptions {
   tapSlop?: number
   /** A press held longer than this is not a tap. */
   tapMaxMs?: number
+  /** Longest gap between mouse clicks that still counts as one chain, ms. */
+  mouseChainWindowMs?: number
+  /** Furthest two mouse clicks of one chain may be apart, in frame fractions. */
+  mouseChainSlop?: number
 }
 
 const DEFAULTS = {
@@ -55,7 +74,14 @@ const DEFAULTS = {
   // fingertip's wobble, over the jitter of holding still.
   tapSlop: 0.012,
   tapMaxMs: 350,
+  // A mouse is the device the desktop's own double-click timing was designed
+  // for, so it gets the desktop's numbers: ~500ms (the Windows and macOS
+  // default) and a few pixels of slop rather than a fingertip's worth.
+  mouseChainWindowMs: 500,
+  mouseChainSlop: 0.004,
 }
+
+const BUTTON_ORDER: readonly PointerButton[] = ['left', 'right', 'middle']
 
 interface Gesture {
   startedAt: number
@@ -80,6 +106,20 @@ export class PointerControl {
   private buttons = 0
   private gesture: Gesture | null = null
   private lastTap: { at: number; point: NormalisedPoint; count: number } | null = null
+  /** Mouse only: buttons pressed on a letterbox bar, ignored until released. */
+  private ignoredButtons = 0
+  /** Mouse only: the click count each held button went down with, for its `up`. */
+  private readonly mouseClickCounts: Record<PointerButton, number> = {
+    left: 1,
+    right: 1,
+    middle: 1,
+  }
+  private lastMouseClick: {
+    at: number
+    point: NormalisedPoint
+    count: number
+    button: PointerButton
+  } | null = null
 
   constructor(options: PointerControlOptions = {}) {
     this.options = { ...DEFAULTS, ...options }
@@ -108,15 +148,120 @@ export class PointerControl {
   /** Release everything. For unmount, session end, or losing the channel. */
   abandon(): PointerIntent[] {
     this.gesture = null
-    if (this.buttons === 0) return []
-    const button = 'left' as const
-    this.buttons = 0
-    return [{ kind: 'up', point: this.cursor, buttons: 0, button, clickCount: 1 }]
+    this.ignoredButtons = 0
+    // Every held button, not just left: a mouse can be holding right or middle,
+    // and each one stranded is a desktop stuck mid-drag.
+    return this.transitionTo(0, this.cursor, false)
   }
 
   handle(sample: StagePointerSample): PointerIntent[] {
     if (!sample.frame) return []
+    // A mouse ignores the pointer mode. Trackpad and direct are two answers to
+    // "what does a finger mean"; a mouse already says what it means, and
+    // running it through tap detection is what made slow clicks vanish.
+    if (sample.pointerType === 'mouse') return this.handleMouse(sample)
     return this.mode === 'direct' ? this.handleDirect(sample) : this.handleTrackpad(sample)
+  }
+
+  /**
+   * A wheel or touchpad scroll, at the pointer. Scroll only comes from a mouse
+   * or touchpad, which has a real position, so the cursor goes there whatever
+   * the touch mode — the desktop scrolls whatever is under its cursor, and
+   * that has to be what is under the user's.
+   */
+  handleWheel(sample: StageWheelSample): PointerIntent[] {
+    if (!sample.frame || (sample.dx === 0 && sample.dy === 0)) return []
+    this.cursor = clampPoint(sample.frame)
+    return [
+      { kind: 'scroll', point: this.cursor, buttons: this.buttons, dx: sample.dx, dy: sample.dy },
+    ]
+  }
+
+  // -- mouse: passed straight through ---------------------------------------
+
+  private handleMouse(sample: StagePointerSample): PointerIntent[] {
+    const frame = sample.frame as FramePoint
+    // `cancel` has no trustworthy mask — the browser took the pointer away —
+    // so it is read as "nothing held", which is the only safe place to leave
+    // the desktop.
+    const reported = sample.kind === 'cancel' ? 0 : (sample.buttons ?? 0)
+
+    // Released buttons stop being ignored whatever else happens.
+    this.ignoredButtons &= reported
+    if (!frame.inFrame) {
+      // A press on a bar is not a desktop click, same as a tap there in
+      // direct mode. Remember it so the drag it starts is not mistaken for a
+      // press the moment it crosses onto the frame.
+      this.ignoredButtons |= reported & ~this.buttons
+    }
+    const desired = reported & ~this.ignoredButtons
+
+    // Clamped, not dropped, when off the frame — hovering or dragging alike.
+    // The desktop's edges are where the Dock, the menu bar and the taskbar
+    // live, and a mouse flicked past the bottom of the picture has to leave
+    // the cursor on the last row, not a few pixels short where its final
+    // in-frame sample happened to land.
+    const point = clampPoint(frame)
+    this.cursor = point
+
+    if (desired === this.buttons) {
+      return [{ kind: 'move', point, buttons: this.buttons }]
+    }
+    // The mask, not the event kind, decides what changed. A browser fires
+    // `pointerdown` only for the first button of a chord; pressing right while
+    // left is held arrives as a `pointermove` with a new mask.
+    return this.transitionTo(desired, point, true, sample.at)
+  }
+
+  /**
+   * Down/up intents that take the held mask from `this.buttons` to `desired`,
+   * one button at a time so each intent's mask is exactly the state after it.
+   * Releases go first: when a sample both drops one button and adds another,
+   * the desktop never sees a moment with both held.
+   */
+  private transitionTo(
+    desired: number,
+    point: NormalisedPoint,
+    countClicks: boolean,
+    at = 0,
+  ): PointerIntent[] {
+    const intents: PointerIntent[] = []
+    for (const button of BUTTON_ORDER) {
+      const bit = BUTTON_MASK[button]
+      if ((this.buttons & bit) === 0 || (desired & bit) !== 0) continue
+      this.buttons &= ~bit
+      intents.push({
+        kind: 'up',
+        point,
+        buttons: this.buttons,
+        button,
+        clickCount: this.mouseClickCounts[button],
+      })
+      this.mouseClickCounts[button] = 1
+    }
+    for (const button of BUTTON_ORDER) {
+      const bit = BUTTON_MASK[button]
+      if ((this.buttons & bit) !== 0 || (desired & bit) === 0) continue
+      this.buttons |= bit
+      const clickCount = countClicks ? this.mouseChainCount(at, point, button) : 1
+      this.mouseClickCounts[button] = clickCount
+      intents.push({ kind: 'down', point, buttons: this.buttons, button, clickCount })
+    }
+    return intents
+  }
+
+  /** The mouse version of {@link chainCount}: desktop timing, per button. */
+  private mouseChainCount(at: number, point: NormalisedPoint, button: PointerButton): number {
+    const previous = this.lastMouseClick
+    const count =
+      previous &&
+      previous.button === button &&
+      at - previous.at <= this.options.mouseChainWindowMs &&
+      distance(point, previous.point) <= this.options.mouseChainSlop
+        ? Math.min(3, previous.count + 1)
+        : 1
+    this.lastMouseClick = { at, point, count, button }
+    return count
   }
 
   // -- direct: the finger *is* the pointer ----------------------------------

@@ -209,6 +209,206 @@ describe('direct mode', () => {
   })
 })
 
+/** A mouse sample: `buttons` is the DOM mask held after the event. */
+function mouse(
+  kind: StagePointerSample['kind'],
+  nx: number,
+  ny: number,
+  at: number,
+  buttons: number,
+  inFrame = true,
+): StagePointerSample {
+  return { kind, frame: { nx, ny, inFrame }, at, pointerType: 'mouse', buttons }
+}
+
+describe('mouse passthrough', () => {
+  it('moves the desktop cursor on hover, with nothing pressed', () => {
+    const control = new PointerControl()
+    const intents = control.handle(mouse('move', 0.3, 0.7, 0, 0))
+
+    expect(intents).toEqual([{ kind: 'move', point: { nx: 0.3, ny: 0.7 }, buttons: 0 }])
+    expect(control.getCursor()).toEqual({ nx: 0.3, ny: 0.7 })
+  })
+
+  it('presses on the way down, at the mouse, even in trackpad mode', () => {
+    const control = new PointerControl()
+    const intents = control.handle(mouse('down', 0.3, 0.7, 0, 1))
+
+    expect(intents).toEqual([
+      { kind: 'down', point: { nx: 0.3, ny: 0.7 }, buttons: 1, button: 'left', clickCount: 1 },
+    ])
+  })
+
+  it('still clicks after a slow press, which tap detection used to swallow', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.3, 0.3, 0, 1))
+    const intents = control.handle(mouse('up', 0.3, 0.3, 900, 0))
+
+    expect(kinds(intents)).toEqual(['up'])
+    expect(intents[0]).toMatchObject({ button: 'left', buttons: 0 })
+  })
+
+  it('still clicks after the mouse wobbles, and drags while held', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.3, 0.3, 0, 1))
+    const drag = control.handle(mouse('move', 0.35, 0.32, 16, 1))
+    const release = control.handle(mouse('up', 0.35, 0.32, 40, 0))
+
+    expect(drag).toEqual([{ kind: 'move', point: { nx: 0.35, ny: 0.32 }, buttons: 1 }])
+    expect(kinds(release)).toEqual(['up'])
+  })
+
+  it('sends right and middle buttons as themselves', () => {
+    const control = new PointerControl()
+
+    expect(control.handle(mouse('down', 0.5, 0.5, 0, 2))[0]).toMatchObject({
+      kind: 'down',
+      button: 'right',
+      buttons: 2,
+    })
+    expect(control.handle(mouse('up', 0.5, 0.5, 30, 0))[0]).toMatchObject({
+      kind: 'up',
+      button: 'right',
+    })
+    expect(control.handle(mouse('down', 0.5, 0.5, 60, 4))[0]).toMatchObject({
+      kind: 'down',
+      button: 'middle',
+      buttons: 4,
+    })
+  })
+
+  it('reads a chord from the mask, since the second button arrives as a move', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.5, 0.5, 0, 1))
+
+    // Browsers fire pointerdown for the first button only.
+    const chord = control.handle(mouse('move', 0.5, 0.5, 20, 3))
+    expect(chord).toEqual([
+      { kind: 'down', point: { nx: 0.5, ny: 0.5 }, buttons: 3, button: 'right', clickCount: 1 },
+    ])
+
+    const releaseLeft = control.handle(mouse('move', 0.5, 0.5, 40, 2))
+    expect(releaseLeft).toMatchObject([{ kind: 'up', button: 'left', buttons: 2 }])
+  })
+
+  it('releases before pressing when one sample swaps buttons', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.5, 0.5, 0, 1))
+
+    const intents = control.handle(mouse('move', 0.5, 0.5, 20, 2))
+    expect(intents.map((i) => [i.kind, i.buttons])).toEqual([
+      ['up', 0],
+      ['down', 2],
+    ])
+  })
+
+  it('counts a double-click with desktop timing, carried on both down and up', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.4, 0.4, 0, 1))
+    control.handle(mouse('up', 0.4, 0.4, 80, 0))
+    // 420ms after the first press: too slow for a double-tap, fine for a mouse.
+    const down = control.handle(mouse('down', 0.4, 0.4, 420, 1))
+    const up = control.handle(mouse('up', 0.4, 0.4, 500, 0))
+
+    expect(down[0]).toMatchObject({ clickCount: 2 })
+    expect(up[0]).toMatchObject({ clickCount: 2 })
+  })
+
+  it('does not chain clicks of different buttons', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.4, 0.4, 0, 1))
+    control.handle(mouse('up', 0.4, 0.4, 50, 0))
+
+    expect(control.handle(mouse('down', 0.4, 0.4, 100, 2))[0]).toMatchObject({ clickCount: 1 })
+  })
+
+  it('pins hover that overshoots the frame to the edge, where the Dock and taskbar are', () => {
+    const control = new PointerControl()
+    // A flick past the bottom of the picture: the last sample is in the bar.
+    expect(control.handle(mouse('move', 0.5, 1.08, 0, 0, false))).toEqual([
+      { kind: 'move', point: { nx: 0.5, ny: 1 }, buttons: 0 },
+    ])
+    expect(control.handle(mouse('move', -0.1, -0.2, 16, 0, false))).toEqual([
+      { kind: 'move', point: { nx: 0, ny: 0 }, buttons: 0 },
+    ])
+  })
+
+  it('ignores a press that began on a bar, including when it drags onto the frame', () => {
+    const control = new PointerControl()
+    // Moves the cursor to the edge like any hover, but presses nothing.
+    expect(control.handle(mouse('down', -0.1, 0.5, 0, 1, false))).toEqual([
+      { kind: 'move', point: { nx: 0, ny: 0.5 }, buttons: 0 },
+    ])
+
+    // Still held, now over the desktop: a move, not a late press.
+    expect(control.handle(mouse('move', 0.2, 0.5, 16, 1))).toEqual([
+      { kind: 'move', point: { nx: 0.2, ny: 0.5 }, buttons: 0 },
+    ])
+    expect(control.handle(mouse('up', 0.2, 0.5, 30, 0))).toEqual([
+      { kind: 'move', point: { nx: 0.2, ny: 0.5 }, buttons: 0 },
+    ])
+  })
+
+  it('pins a drag that leaves the frame to the edge', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.9, 0.5, 0, 1))
+
+    expect(control.handle(mouse('move', 1.2, 0.5, 16, 1, false))).toEqual([
+      { kind: 'move', point: { nx: 1, ny: 0.5 }, buttons: 1 },
+    ])
+  })
+
+  it('releases everything held on pointercancel', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.5, 0.5, 0, 1))
+    control.handle(mouse('move', 0.5, 0.5, 10, 5))
+
+    const intents = control.handle(mouse('cancel', 0.5, 0.5, 20, 5))
+    expect(intents.map((i) => ('button' in i ? `${i.kind}:${i.button}` : i.kind))).toEqual([
+      'up:left',
+      'up:middle',
+    ])
+    expect(control.getButtons()).toBe(0)
+  })
+
+  it('ignores the touch pointer mode', () => {
+    const control = new PointerControl()
+    control.setMode('direct')
+    expect(kinds(control.handle(mouse('move', 0.5, 0.5, 0, 0)))).toEqual(['move'])
+  })
+})
+
+describe('scrolling', () => {
+  it('scrolls at the pointer, carrying the held buttons', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.5, 0.5, 0, 1))
+
+    expect(control.handleWheel({ frame: { nx: 0.4, ny: 0.6, inFrame: true }, dx: 0, dy: 100 })).toEqual([
+      { kind: 'scroll', point: { nx: 0.4, ny: 0.6 }, buttons: 1, dx: 0, dy: 100 },
+    ])
+    expect(control.getCursor()).toEqual({ nx: 0.4, ny: 0.6 })
+  })
+
+  it('moves the cursor to the wheel even in touch trackpad mode', () => {
+    // Whatever the desktop scrolls is whatever is under its cursor.
+    const control = new PointerControl()
+    const [intent] = control.handleWheel({ frame: { nx: 0.1, ny: 0.2, inFrame: true }, dx: 30, dy: 0 })
+    expect(intent.point).toEqual({ nx: 0.1, ny: 0.2 })
+  })
+
+  it('pins a scroll over a letterbox bar to the edge', () => {
+    const control = new PointerControl()
+    const [intent] = control.handleWheel({ frame: { nx: 1.1, ny: 0.5, inFrame: false }, dx: 0, dy: -100 })
+    expect(intent.point).toEqual({ nx: 1, ny: 0.5 })
+  })
+
+  it('sends nothing for an empty delta or before a frame decodes', () => {
+    const control = new PointerControl()
+    expect(control.handleWheel({ frame: { nx: 0.5, ny: 0.5, inFrame: true }, dx: 0, dy: 0 })).toEqual([])
+    expect(control.handleWheel({ frame: null, dx: 0, dy: 100 })).toEqual([])
+  })
+})
+
 describe('abandoning a gesture', () => {
   it('releases a held button when the mode changes under it', () => {
     const control = new PointerControl()
@@ -229,6 +429,18 @@ describe('abandoning a gesture', () => {
     expect(kinds(control.abandon())).toEqual(['up'])
     // Idempotent: the session can end twice over without sending a stray up.
     expect(control.abandon()).toEqual([])
+  })
+
+  it('releases every held mouse button on teardown, not only left', () => {
+    const control = new PointerControl()
+    control.handle(mouse('down', 0.5, 0.5, 0, 2))
+    control.handle(mouse('move', 0.5, 0.5, 10, 6))
+
+    const intents = control.abandon()
+    expect(intents).toMatchObject([
+      { kind: 'up', button: 'right', buttons: 4 },
+      { kind: 'up', button: 'middle', buttons: 0 },
+    ])
   })
 
   it('has nothing to release when no button is held', () => {

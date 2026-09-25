@@ -35,6 +35,9 @@ struct InputRouterStats {
     /// error — the count is here to tell "the network reorders" apart from
     /// "our sequencing is wrong".
     uint64_t staleDropped = 0;
+    /// Scrolls applied at the newest position because their own was stale.
+    /// The delta still lands; only the cursor stays put.
+    uint64_t staleScrollPositions = 0;
     uint64_t invalidDropped = 0;
     uint64_t rateLimited = 0;
     /// Presses invented for a `pointerUp` whose `pointerDown` never arrived.

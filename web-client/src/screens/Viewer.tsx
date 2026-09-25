@@ -11,8 +11,9 @@ import { useSession, useSessionClient } from '../session/useSession'
 import { getDevice, markConnected } from '../store/devices'
 import { setPref, usePrefs } from '../store/prefs'
 import type { PointerMode, QualityPriority, SessionState } from '../session/types'
+import { atRevealEdge, REVEAL_DWELL_MS } from '../viewer/chromeReveal'
 import { PointerControl } from '../viewer/pointerControl'
-import type { StagePointerSample } from '../viewer/pointerControl'
+import type { StagePointerSample, StageWheelSample } from '../viewer/pointerControl'
 import { VideoStage } from '../viewer/VideoStage'
 import { FloatingControl, ViewerBanner, ViewerBottomBar, ViewerTopBar } from '../viewer/chrome'
 import type { ViewerAction } from '../viewer/chrome'
@@ -100,8 +101,30 @@ export function Viewer() {
     if (overlay !== null) hold()
   }, [overlay, hold])
 
+  // A mouse brings the chrome back by resting on the top edge, not by moving:
+  // see viewer/chromeReveal.ts for why hover must not wake it.
+  const revealTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(revealTimer.current), [])
+
+  const handleStageActivity = useCallback(
+    (pointerType: string) => {
+      if (pointerType !== 'mouse') wake()
+    },
+    [wake],
+  )
+
   const handlePointer = useCallback(
     (sample: StagePointerSample) => {
+      if (atRevealEdge(sample)) {
+        revealTimer.current ??= setTimeout(() => {
+          revealTimer.current = undefined
+          wake()
+        }, REVEAL_DWELL_MS)
+      } else if (revealTimer.current !== undefined) {
+        clearTimeout(revealTimer.current)
+        revealTimer.current = undefined
+      }
+
       for (const intent of control.handle(sample)) {
         // Only on press. A vibration per move would fire at the sample rate,
         // which is a phone buzzing continuously through a drag.
@@ -110,7 +133,15 @@ export function Viewer() {
       }
       setCursor(control.getCursor())
     },
-    [client, control, prefs.haptics],
+    [client, control, prefs.haptics, wake],
+  )
+
+  const handleWheel = useCallback(
+    (sample: StageWheelSample) => {
+      for (const intent of control.handleWheel(sample)) client.sendPointer(intent)
+      setCursor(control.getCursor())
+    },
+    [client, control],
   )
 
   // Switching modes abandons whatever gesture is in flight, so a button held in
@@ -215,8 +246,9 @@ export function Viewer() {
         trackSize={track}
         stream={state.stream}
         dim={reconnecting ? 0.66 : dim}
-        onActivity={wake}
+        onActivity={handleStageActivity}
         onPointer={overlay === null ? handlePointer : undefined}
+        onWheel={overlay === null ? handleWheel : undefined}
       >
         {(box) =>
           pointerMode === 'trackpad' && !reconnecting ? (
@@ -225,7 +257,9 @@ export function Viewer() {
         }
       </VideoStage>
 
-      <div className={styles.chrome}>
+      {/* Moving over the bars themselves keeps them up, so a mouse reaching
+          for a button is not raced by the auto-hide. */}
+      <div className={styles.chrome} onPointerMove={wake}>
         {reconnecting ? (
           <ReconnectOverlay onEnd={() => client.end()} />
         ) : (

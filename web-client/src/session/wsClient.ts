@@ -175,6 +175,9 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   let inputChannel: RTCDataChannel | null = null
   let inputSeq = 0
   let pendingMove: PointerIntent | null = null
+  // Wheel deltas summed since the last frame. Unlike a move, a scroll cannot
+  // be replaced by the newest one — each is distance the user asked for.
+  let pendingScroll: Extract<PointerIntent, { kind: 'scroll' }> | null = null
   let moveScheduled = false
   // Candidates that arrived before the offer was applied. addIceCandidate
   // throws until a remote description is in place, and the desktop trickles
@@ -422,6 +425,7 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     // own gate when the old one closes, so the two agree.
     inputSeq = 0
     pendingMove = null
+    pendingScroll = null
 
     channel.onclose = () => {
       if (inputChannel === channel) inputChannel = null
@@ -442,8 +446,23 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   function flushPendingMove() {
     moveScheduled = false
     const move = pendingMove
+    const scroll = pendingScroll
     pendingMove = null
+    pendingScroll = null
+    // A scroll carries a position too, kept current by every move that came
+    // after it, so it stands in for the move rather than following it.
+    if (scroll) {
+      if (scroll.dx !== 0 || scroll.dy !== 0) sendInput(scroll)
+      else if (move) sendInput(move)
+      return
+    }
     if (move) sendInput(move)
+  }
+
+  function scheduleFlush() {
+    if (moveScheduled) return
+    moveScheduled = true
+    schedule(flushPendingMove)
   }
 
   /** One trickled candidate from the desktop, queued if it is too early. */
@@ -638,11 +657,31 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     },
 
     sendPointer(intent: PointerIntent) {
+      if (intent.kind === 'scroll') {
+        // Summed per frame. A Windows precision touchpad fires wheel events
+        // well above the display rate, and each one is a packet on the same
+        // transport as the video.
+        pendingScroll = pendingScroll
+          ? {
+              ...intent,
+              dx: pendingScroll.dx + intent.dx,
+              dy: pendingScroll.dy + intent.dy,
+            }
+          : intent
+        scheduleFlush()
+        return
+      }
+
       if (intent.kind !== 'move') {
         // Clicks go immediately, and supersede any move still waiting: the
         // button message carries its own position, so dropping the move loses
-        // nothing and sending it first would only add a packet.
+        // nothing and sending it first would only add a packet. A waiting
+        // scroll is different — it is distance, not position — so it goes
+        // first, keeping "scrolled, then clicked" in that order.
         pendingMove = null
+        const scroll = pendingScroll
+        pendingScroll = null
+        if (scroll && (scroll.dx !== 0 || scroll.dy !== 0)) sendInput(scroll)
         sendInput(intent)
         return
       }
@@ -652,9 +691,10 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
       // they would cost jitter on the same DTLS transport as the video and buy
       // nothing, because only the newest position is ever the right one.
       pendingMove = intent
-      if (moveScheduled) return
-      moveScheduled = true
-      schedule(flushPendingMove)
+      if (pendingScroll) {
+        pendingScroll = { ...pendingScroll, point: intent.point, buttons: intent.buttons }
+      }
+      scheduleFlush()
     },
 
     sendKey(_kind: 'down' | 'up', _code: string, _modifiers: readonly string[]) {

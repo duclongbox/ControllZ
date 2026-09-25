@@ -42,8 +42,48 @@ export type PointerIntent =
       /** 1 single, 2 double, 3 triple. */
       clickCount: number
     }
+  | {
+      kind: 'scroll'
+      point: NormalisedPoint
+      buttons: number
+      /**
+       * CSS pixels, DOM WheelEvent signs (positive dy scrolls down), with a
+       * wheel notch normalised to 100 — see {@link wheelDelta}. The only
+       * delta on the wire: scrolling has no absolute state to send instead.
+       */
+      dx: number
+      dy: number
+    }
 
-const WIRE_TYPE = { move: 'pointerMove', down: 'pointerDown', up: 'pointerUp' } as const
+const WIRE_TYPE = {
+  move: 'pointerMove',
+  down: 'pointerDown',
+  up: 'pointerUp',
+  scroll: 'scroll',
+} as const
+
+/** One wheel notch, in the pixels the wire carries. Chrome and Edge report it
+ * as 100 already; line-mode senders (Firefox) report 3 lines. */
+export const WHEEL_NOTCH_PX = 100
+const LINE_PX = WHEEL_NOTCH_PX / 3
+const PAGE_PX = 800
+
+/** A WheelEvent's delta in wire pixels, whatever `deltaMode` it came in. */
+export function wheelDelta(event: {
+  deltaX: number
+  deltaY: number
+  deltaMode: number
+}): { dx: number; dy: number } {
+  const scale = event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? PAGE_PX : 1
+  return { dx: event.deltaX * scale, dy: event.deltaY * scale }
+}
+
+/** The schema's bound, so a runaway accumulation never becomes a rejected message. */
+const MAX_SCROLL = 10000
+
+function clampScroll(value: number): number {
+  return Math.max(-MAX_SCROLL, Math.min(MAX_SCROLL, Math.round(value * 100) / 100))
+}
 
 /**
  * Four decimal places: 1/10000 of a screen is a fifth of a pixel on a 1920-wide
@@ -65,9 +105,12 @@ export function encodePointerMessage(intent: PointerIntent, seq: number, at: num
     buttons: intent.buttons,
   }
 
-  if (intent.kind !== 'move') {
+  if (intent.kind === 'down' || intent.kind === 'up') {
     message.button = intent.button
     message.clickCount = intent.clickCount
+  } else if (intent.kind === 'scroll') {
+    message.dx = clampScroll(intent.dx)
+    message.dy = clampScroll(intent.dy)
   }
 
   return JSON.stringify(message)
