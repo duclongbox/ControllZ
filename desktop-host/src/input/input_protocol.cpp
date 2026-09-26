@@ -15,6 +15,7 @@ std::optional<PointerAction> actionFrom(const std::string& type) {
     if (type == "pointerMove") return PointerAction::move;
     if (type == "pointerDown") return PointerAction::down;
     if (type == "pointerUp") return PointerAction::up;
+    if (type == "scroll") return PointerAction::scroll;
     return std::nullopt;
 }
 
@@ -89,6 +90,20 @@ std::optional<PointerMessage> parsePointerMessage(std::string_view json) {
     message.sentAtMs = integer(doc, "t").value_or(0);
 
     if (*action == PointerAction::move) {
+        return message;
+    }
+
+    if (*action == PointerAction::scroll) {
+        // The schema's bound. Nothing a wheel produces in one frame comes near
+        // it, so a value past it is a sender to refuse, not one to clamp.
+        constexpr double kMaxScroll = 10000;
+        const auto dx = number(doc, "dx");
+        const auto dy = number(doc, "dy");
+        if (!dx || !dy || std::fabs(*dx) > kMaxScroll || std::fabs(*dy) > kMaxScroll) {
+            return std::nullopt;
+        }
+        message.dx = *dx;
+        message.dy = *dy;
         return message;
     }
 

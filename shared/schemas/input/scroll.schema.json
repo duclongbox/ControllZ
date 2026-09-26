@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/scroll.schema.json",
+  "title": "scroll",
+  "description": "A wheel or two-finger scroll, at a position. The one input message that carries a DELTA rather than an absolute value, because scrolling has no absolute state to report. That is survivable on this channel because deltas commute: the host applies every scroll it receives in whatever order it arrives, and a lost one costs that much scroll distance and nothing else -- there is nothing to get stuck. The position fields are treated like a move's: applied only when this is the newest sample, so a late scroll never drags the cursor backwards. Coalesced by the sender to at most one per animation frame, deltas summed.",
+  "allOf": [{ "$ref": "pointerSample.schema.json" }],
+  "type": "object",
+  "properties": {
+    "type": { "const": "scroll" },
+    "dx": {
+      "type": "number",
+      "minimum": -10000,
+      "maximum": 10000,
+      "description": "Horizontal scroll in the sender's CSS pixels, DOM WheelEvent sign convention: positive scrolls right. Line and page deltas are normalised to pixels by the sender, one standard wheel notch = 100."
+    },
+    "dy": {
+      "type": "number",
+      "minimum": -10000,
+      "maximum": 10000,
+      "description": "Vertical scroll, same basis as dx: positive scrolls down (content moves up), as DOM deltaY does. Each host maps this to its native unit -- pixel scroll events on macOS, WHEEL_DELTA (120 per notch) on Windows."
+    }
+  },
+  "required": ["type", "dx", "dy"]
+}

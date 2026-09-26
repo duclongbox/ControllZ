@@ -44,12 +44,13 @@ VideoToolbox SDKs).
 cd web-client && npm install && npm run dev:tunnel
 
 # signaling-server — http://localhost:8080, health at /actuator/health
-cd signaling-server ./mvnw spring-boot:run
+cd signaling-server && ./mvnw spring-boot:run
 
 # the tunnel — ngrok rather than cloudflared. Cloudflare Tunnel needs outbound
 # port 7844, which guest and public Wi-Fi routinely block; the symptom is a
 # Cloudflare "Error 1033" page while the local dev server is perfectly healthy.
 # ngrok runs over 443, so it survives those networks.
+cd web-client
 brew install --cask ngrok
 ngrok config add-authtoken <token>   # one-time, from dashboard.ngrok.com
 npm run tunnel                       # = ngrok http 5173
@@ -62,8 +63,8 @@ npm run tunnel                       # = ngrok http 5173
 # ngrok's free tier allows 20k requests/month, and the dev server spends
 # hundreds of them per phone reload (one request per module). For a long phone
 # session, tunnel a production build instead — a handful of requests:
-npm run build && npm run preview     
-npm run tunnel:preview               
+cd web-client && npm run build && npm run preview     
+cd web-client && npm run tunnel:preview               
 
 # restart validated devices:
 rm ~/.remotehost/desktop-identity.json

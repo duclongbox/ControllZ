@@ -79,6 +79,13 @@ public:
     virtual void buttonDown(ScreenPoint point, MouseButton button, int clickCount) = 0;
 
     virtual void buttonUp(ScreenPoint point, MouseButton button, int clickCount) = 0;
+
+    /// Scrolls whatever is under `point`. `dx`/`dy` are the wire's units —
+    /// sender CSS pixels, DOM signs (positive dy scrolls down), one wheel
+    /// notch = 100 — and each backend converts to its own. Backends keep the
+    /// sub-unit remainder, so a touchpad's stream of small deltas is not
+    /// rounded away one event at a time.
+    virtual void scroll(ScreenPoint point, double dx, double dy) = 0;
 };
 
 /// `displayId` 0 means the main display, matching `CaptureConfig::displayId`.

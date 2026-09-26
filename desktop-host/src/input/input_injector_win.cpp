@@ -5,6 +5,8 @@
 
 #include <windows.h>
 
+#include <cmath>
+
 #include "desktophost/input/pointer_mapping.h"
 #include "platform/win/d3d_device.h"
 
@@ -102,6 +104,42 @@ public:
         sendAt(point, upFlagFor(button));
     }
 
+    // The router has already moved the cursor to `point`, and Windows 10+
+    // scrolls the window under the cursor, so the wheel alone is enough.
+    void scroll(ScreenPoint point, double dx, double dy) override {
+        (void)point;
+        // The wire's notch is 100; Windows' is WHEEL_DELTA (120). Vertical
+        // is positive-up on Windows and positive-down in the DOM; horizontal
+        // is positive-right in both. Values that are not a multiple of 120
+        // are allowed — precision touchpads send them — so the remainder
+        // carried is below one unit, not below one notch.
+        constexpr double kUnitsPerPixel = static_cast<double>(WHEEL_DELTA) / 100.0;
+        pendingY_ -= dy * kUnitsPerPixel;
+        pendingX_ += dx * kUnitsPerPixel;
+        const auto wheelY = static_cast<LONG>(std::trunc(pendingY_));
+        const auto wheelX = static_cast<LONG>(std::trunc(pendingX_));
+        pendingY_ -= wheelY;
+        pendingX_ -= wheelX;
+
+        INPUT inputs[2]{};
+        UINT count = 0;
+        if (wheelY != 0) {
+            inputs[count].type = INPUT_MOUSE;
+            inputs[count].mi.dwFlags = MOUSEEVENTF_WHEEL;
+            inputs[count].mi.mouseData = static_cast<DWORD>(wheelY);
+            ++count;
+        }
+        if (wheelX != 0) {
+            inputs[count].type = INPUT_MOUSE;
+            inputs[count].mi.dwFlags = MOUSEEVENTF_HWHEEL;
+            inputs[count].mi.mouseData = static_cast<DWORD>(wheelX);
+            ++count;
+        }
+        if (count > 0) {
+            SendInput(count, inputs, sizeof(INPUT));
+        }
+    }
+
 private:
     /// Move and press as one SendInput call, so no other input can land
     /// between them and the press happens where the phone tapped.
@@ -113,6 +151,10 @@ private:
     }
 
     uint32_t displayId_;
+    // Sub-unit remainder carried to the next scroll. Only touched from
+    // InputRouter, under its lock.
+    double pendingX_ = 0;
+    double pendingY_ = 0;
 };
 
 }  // namespace

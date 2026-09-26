@@ -102,6 +102,25 @@ void InputRouter::handleMessage(std::string_view json, Clock::time_point now) {
 
     const PointerMessage& message = *parsed;
 
+    if (message.action == PointerAction::scroll) {
+        // Never stale-dropped. A scroll's delta is distance the user asked
+        // for, and deltas commute, so one arriving late is applied late rather
+        // than lost. Its *position* is a sample like a move's, though, and
+        // only the newest may move the cursor — the same gate a move takes.
+        if (!sampleSeen_ || message.seq > newestSeq_) {
+            sampleSeen_ = true;
+            newestSeq_ = message.seq;
+            rememberPosition(message);
+            reconcile(message.buttons);
+            injector_->move(currentPoint(), held_);
+        } else {
+            ++stats_.staleScrollPositions;
+        }
+        injector_->scroll(currentPoint(), message.dx, message.dy);
+        ++stats_.applied;
+        return;
+    }
+
     if (message.action == PointerAction::move) {
         // Moves are idempotent and stale-droppable: losing one costs nothing
         // once the next arrives, and applying an old one would drag the cursor

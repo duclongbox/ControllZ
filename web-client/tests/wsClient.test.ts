@@ -578,6 +578,62 @@ describe('wsClient input channel', () => {
     client.dispose()
   })
 
+  const scroll = (nx: number, dy: number, dx = 0) => ({
+    kind: 'scroll' as const,
+    point: { nx, ny: 0.5 },
+    buttons: 0,
+    dx,
+    dy,
+  })
+
+  it('sums scrolls within a frame instead of keeping only the newest', async () => {
+    const { client, peer } = await streaming()
+    const channel = peer.offerDataChannel()
+
+    // Unlike moves, every one of these is distance the user asked for.
+    client.sendPointer(scroll(0.3, 40))
+    client.sendPointer(scroll(0.3, 25.5, -10))
+    client.sendPointer(scroll(0.4, 34.5))
+
+    await vi.waitFor(() => expect(channel.sent).toHaveLength(1))
+    expect(channel.messages[0]).toEqual({
+      type: 'scroll',
+      seq: 1,
+      t: expect.any(Number),
+      nx: 0.4,
+      ny: 0.5,
+      buttons: 0,
+      dx: -10,
+      dy: 100,
+    })
+    client.dispose()
+  })
+
+  it('lets a scroll stand in for the move that followed it, at the newer position', async () => {
+    const { client, peer } = await streaming()
+    const channel = peer.offerDataChannel()
+
+    client.sendPointer(scroll(0.3, 100))
+    client.sendPointer({ kind: 'move', point: { nx: 0.7, ny: 0.2 }, buttons: 0 })
+
+    await vi.waitFor(() => expect(channel.sent).toHaveLength(1))
+    expect(channel.messages[0]).toMatchObject({ type: 'scroll', nx: 0.7, ny: 0.2, dy: 100 })
+    client.dispose()
+  })
+
+  it('sends a waiting scroll before a click, keeping their order', async () => {
+    const { client, peer } = await streaming()
+    const channel = peer.offerDataChannel()
+
+    client.sendPointer(scroll(0.5, 100))
+    client.sendPointer(click(0.5, 0.5)[0])
+
+    expect(channel.messages.map((m) => m.type)).toEqual(['scroll', 'pointerDown'])
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(channel.messages).toHaveLength(2)
+    client.dispose()
+  })
+
   it('drops input silently when there is no channel', async () => {
     // --no-input on the desktop leaves the SCTP m-line out of the offer, so no
     // channel ever arrives. The UI still reports a cursor; it just goes nowhere.
