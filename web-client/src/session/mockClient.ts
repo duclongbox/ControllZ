@@ -1,4 +1,4 @@
-import type { PointerIntent } from '../protocol/input'
+import type { KeyIntent, PointerIntent } from '../protocol/input'
 import type { RejectReason } from '../protocol/types'
 import type { SessionClient } from './client'
 import type {
@@ -251,8 +251,8 @@ export function createMockClient(options: MockClientOptions = {}): SessionClient
       // discarding keeps the design views and the gallery working.
     },
 
-    sendKey(_kind: 'down' | 'up', _code: string, _modifiers: readonly string[]) {
-      // M2, as above.
+    sendKey(_intent: KeyIntent) {
+      // No desktop to type into, as above.
     },
 
     restartIce() {

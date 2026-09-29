@@ -1,4 +1,4 @@
-import type { PointerIntent } from '../protocol/input'
+import type { KeyIntent, PointerIntent } from '../protocol/input'
 import type { QualityPriority, SessionState } from './types'
 
 /**
@@ -47,8 +47,12 @@ export interface SessionClient {
    */
   sendPointer(intent: PointerIntent): void
 
-  /** M2: a physical key, never a character — layouts differ per OS. */
-  sendKey(kind: 'down' | 'up', code: string, modifiers: readonly string[]): void
+  /**
+   * One physical key, never a character — layouts differ per OS, and the
+   * desktop's own layout decides what the position types. Goes on the ordered,
+   * reliable `keys` channel: typing needs every keystroke, in order.
+   */
+  sendKey(intent: KeyIntent): void
 
   /** M5: network changed under us; restart ICE without tearing down the stage. */
   restartIce(): void

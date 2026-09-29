@@ -59,6 +59,8 @@ public:
             Event{Event::Kind::scroll, point.x, point.y, MouseButton::left, 0, 0, dx, dy});
     }
 
+    bool key(std::string_view, bool, bool) override { return true; }
+
     size_t count(Event::Kind kind) const {
         size_t total = 0;
         for (const Event& event : events) {

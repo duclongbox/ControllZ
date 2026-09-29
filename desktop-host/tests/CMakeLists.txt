@@ -16,6 +16,9 @@ add_executable(desktophost_tests
     input_router_test.cpp
     input_protocol_test.cpp
     pointer_mapping_test.cpp
+    # Keyboard routing plus BOTH hosts' key tables, so the Windows mapping is
+    # checked on a Mac runner and the Mac mapping on a Windows one.
+    keyboard_test.cpp
 )
 
 # Exercises the real platform encoder (VideoToolbox / Media Foundation) against

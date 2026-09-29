@@ -634,6 +634,33 @@ describe('wsClient input channel', () => {
     client.dispose()
   })
 
+  it('sends keys on their own channel, not the pointer one', async () => {
+    const { client, peer } = await streaming()
+    const input = peer.offerDataChannel('input')
+    const keys = peer.offerDataChannel('keys')
+
+    client.sendKey({ kind: 'down', code: 'KeyA', repeat: false })
+    client.sendKey({ kind: 'down', code: 'KeyA', repeat: true })
+    client.sendKey({ kind: 'up', code: 'KeyA', repeat: false })
+
+    expect(input.messages).toHaveLength(0)
+    // Immediately and in order: never coalesced, never reordered.
+    expect(keys.messages).toEqual([
+      { type: 'keyDown', code: 'KeyA', t: expect.any(Number) },
+      { type: 'keyDown', code: 'KeyA', t: expect.any(Number), repeat: true },
+      { type: 'keyUp', code: 'KeyA', t: expect.any(Number) },
+    ])
+    expect(keys.readyState).not.toBe('closed')
+    client.dispose()
+  })
+
+  it('drops keys silently when the host offered no keys channel', async () => {
+    const { client, peer } = await streaming()
+    peer.offerDataChannel('input')
+    expect(() => client.sendKey({ kind: 'down', code: 'KeyA', repeat: false })).not.toThrow()
+    client.dispose()
+  })
+
   it('drops input silently when there is no channel', async () => {
     // --no-input on the desktop leaves the SCTP m-line out of the offer, so no
     // channel ever arrives. The UI still reports a cursor; it just goes nowhere.

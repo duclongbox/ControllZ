@@ -87,9 +87,19 @@ architecture promises they never do.
 | `pointerMove` | `seq, t, nx, ny, buttons` | coalesced to one per animation frame; stale-droppable |
 | `pointerDown` | + `button, clickCount` | `clickCount` is decided by the phone |
 | `pointerUp` | + `button, clickCount` | orphan ups synthesise a press host-side |
+| `scroll` | + `dx, dy` | the one delta on `input`; deltas commute, so never stale-dropped |
+| `keyDown` / `keyUp` | `code, repeat?, t` | **`keys` channel** — ordered and reliable; see below |
+
+**Keyboard has its own channel.** Everything above rides `input`, which is
+unordered with no retransmits: a pointer sample is superseded by the next one.
+Keystrokes are the opposite — each must arrive exactly once, in order — so they
+ride `keys`, an ordered, reliable channel. Two channels are two SCTP streams: a
+lost keystroke delays only the keys behind it, and pointer traffic never waits
+on a key retransmit (or vice versa). `code` is a physical position
+(`KeyboardEvent.code`); the host's own layout decides the character.
 
 Two conventions here differ from the control plane above, both for the same
-reason — this channel is **unordered and unreliable**:
+reason — the `input` channel is **unordered and unreliable**:
 
 - **Timestamps are epoch ms, not ISO-8601.** `t` is a diagnostic on a 120 Hz
   stream; a 24-byte string per sample to express something never used for

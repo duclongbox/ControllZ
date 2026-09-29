@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string_view>
 
 namespace desktophost {
 
@@ -86,6 +87,16 @@ public:
     /// sub-unit remainder, so a touchpad's stream of small deltas is not
     /// rounded away one event at a time.
     virtual void scroll(ScreenPoint point, double dx, double dy) = 0;
+
+    /// Presses or releases the key at DOM `code`'s physical position (see
+    /// key_codes.h). Returns false for a key this host has no equivalent for,
+    /// which the router counts and otherwise ignores.
+    ///
+    /// Held modifiers are the backend's to track where the OS will not: on
+    /// macOS a synthesised Shift does not reach the system's modifier state,
+    /// so every later key *and pointer* event has to carry the flags itself —
+    /// or Shift+A types "a" and Shift-click does not extend a selection.
+    virtual bool key(std::string_view code, bool down, bool repeat) = 0;
 };
 
 /// `displayId` 0 means the main display, matching `CaptureConfig::displayId`.

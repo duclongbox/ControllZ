@@ -58,6 +58,18 @@ struct PeerConnectionConfig {
 
     /// Channel label, matched by the phone. See shared/schemas/input/.
     std::string inputChannelLabel = "input";
+
+    /// The keyboard's own channel, offered whenever the input channel is.
+    ///
+    /// Ordered and reliable — the opposite of `input`, and deliberately a
+    /// separate channel rather than a mode of that one. Typing needs every
+    /// keystroke exactly once and in order ("teh" is a bug), which is what
+    /// SCTP's reliable ordered delivery is. Pointer samples need the reverse:
+    /// a retransmitted coordinate is already wrong. On one channel either the
+    /// pointer's retransmits would head-of-line block keystrokes, or keys
+    /// would be lost and reordered. Two channels are two SCTP streams, so a
+    /// lost key stalls only the keys behind it, never the pointer.
+    std::string keyChannelLabel = "keys";
 };
 
 enum class PeerState { connecting, connected, disconnected, failed, closed };
@@ -88,6 +100,13 @@ struct PeerConnectionCallbacks {
     /// further `pointerUp` can arrive, so whatever is held has to be released
     /// here or the desktop is left with a stuck mouse button.
     std::function<void()> onInputChannelClosed;
+
+    /// One message from the `keys` channel, unparsed. Ordered and reliable:
+    /// these arrive exactly once, in the order they were typed.
+    std::function<void(std::string message)> onKeyMessage;
+
+    /// The keys channel closed. No keyUp can arrive for anything held.
+    std::function<void()> onKeyChannelClosed;
 };
 
 /// One WebRTC session to one viewer: send-only video out, input messages in.

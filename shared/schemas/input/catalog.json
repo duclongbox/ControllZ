@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://remotehost.dev/schemas/input/catalog.json",
   "title": "Input message catalog (data plane)",
-  "description": "Messages carried on the WebRTC input DataChannel, phone -> desktop only. DELIBERATELY SEPARATE from ../catalog.json: that one is the signaling control plane and mirrors the sealed SignalingMessage hierarchy in signaling-server, which never sees these. Adding an input type there would claim a parity the server does not have, and would suggest input bytes pass through our servers. They do not (CLAUDE.md architecture invariants).",
+  "description": "Messages carried on the WebRTC input DataChannels (`input` and `keys`, see `channels`), phone -> desktop only. DELIBERATELY SEPARATE from ../catalog.json: that one is the signaling control plane and mirrors the sealed SignalingMessage hierarchy in signaling-server, which never sees these. Adding an input type there would claim a parity the server does not have, and would suggest input bytes pass through our servers. They do not (CLAUDE.md architecture invariants).",
   "transport": {
     "channel": "input",
     "ordered": false,
@@ -10,13 +10,31 @@
     "createdBy": "desktop-host",
     "note": "The desktop is the offerer, and an answerer cannot add an m-line the offer lacks, so the host creates the channel before setLocalDescription() and the phone receives it via ondatachannel. No signaling message is involved: the channel is negotiated inside the existing SDP exchange."
   },
+  "channels": [
+    {
+      "channel": "input",
+      "ordered": false,
+      "maxRetransmits": 0,
+      "carries": ["pointerMove", "pointerDown", "pointerUp", "scroll"],
+      "why": "Pointer samples are absolute and superseded by the next one. A retransmitted coordinate is already wrong, and ordered delivery would stall every sample behind a lost one."
+    },
+    {
+      "channel": "keys",
+      "ordered": true,
+      "reliable": true,
+      "carries": ["keyDown", "keyUp"],
+      "why": "Typing needs every keystroke exactly once and in order. A separate channel, not a mode of `input`: on one reliable channel pointer retransmits would head-of-line block keystrokes, and on one unreliable channel keys would be lost and reordered. Two channels are two SCTP streams, so a lost key stalls only the keys behind it. Created by desktop-host alongside `input`, before the offer, for the same reason."
+    }
+  ],
   "messages": [
     { "type": "pointerMove", "direction": "phoneToDesktop", "schema": "pointerMove.schema.json" },
     { "type": "pointerDown", "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" },
     { "type": "pointerUp",   "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" },
-    { "type": "scroll",      "direction": "phoneToDesktop", "schema": "scroll.schema.json" }
+    { "type": "scroll",      "direction": "phoneToDesktop", "schema": "scroll.schema.json" },
+    { "type": "keyDown",     "direction": "phoneToDesktop", "schema": "key.schema.json", "channel": "keys" },
+    { "type": "keyUp",       "direction": "phoneToDesktop", "schema": "key.schema.json", "channel": "keys" }
   ],
   "deferred": [
-    { "type": "keyDown/keyUp", "milestone": "M2 follow-up", "note": "KeyboardEvent.code -> CGKeyCode table" }
+    { "type": "shortcut remapping", "milestone": "keyboard follow-up", "note": "Ctrl <-> Command for cross-OS shortcuts, and capturing OS-reserved combos (Alt+Tab, Win key, Ctrl+W) with the Keyboard Lock API in fullscreen. Keys are mapped by position only until then." }
   ]
 }

@@ -45,7 +45,61 @@ std::optional<int64_t> integer(const Json& parent, const char* key) {
     return it->get<int64_t>();
 }
 
+/// A DOM `code` is ASCII letters and digits ("KeyA", "Numpad7", "F12"). The
+/// bound keeps a hostile peer from handing us an arbitrary string to look up.
+bool plausibleCode(const std::string& code) {
+    if (code.empty() || code.size() > 32) {
+        return false;
+    }
+    for (const char c : code) {
+        const bool alnum = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (!alnum) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
+
+std::optional<KeyMessage> parseKeyMessage(std::string_view json) {
+    const Json doc = Json::parse(json, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) {
+        return std::nullopt;
+    }
+
+    const auto typeIt = doc.find("type");
+    if (typeIt == doc.end() || !typeIt->is_string()) {
+        return std::nullopt;
+    }
+    const std::string type = typeIt->get<std::string>();
+    if (type != "keyDown" && type != "keyUp") {
+        return std::nullopt;
+    }
+
+    const auto codeIt = doc.find("code");
+    if (codeIt == doc.end() || !codeIt->is_string()) {
+        return std::nullopt;
+    }
+    std::string code = codeIt->get<std::string>();
+    if (!plausibleCode(code)) {
+        return std::nullopt;
+    }
+
+    KeyMessage message;
+    message.down = type == "keyDown";
+    message.code = std::move(code);
+    message.sentAtMs = integer(doc, "t").value_or(0);
+    // Absent is a first press. Present must be a boolean: a sender that writes
+    // "true" as a string is not ours.
+    if (const auto repeatIt = doc.find("repeat"); repeatIt != doc.end()) {
+        if (!repeatIt->is_boolean()) {
+            return std::nullopt;
+        }
+        message.repeat = repeatIt->get<bool>();
+    }
+    return message;
+}
 
 std::optional<PointerMessage> parsePointerMessage(std::string_view json) {
     // Non-throwing parse: a malformed message from a remote peer is an

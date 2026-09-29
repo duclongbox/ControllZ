@@ -18,6 +18,7 @@
 #include "desktophost/encode/video_encoder.h"
 #include "desktophost/input/input_injector.h"
 #include "desktophost/input/input_router.h"
+#include "desktophost/input/keyboard_router.h"
 #include "desktophost/signaling/signaling_client.h"
 #include "desktophost/transport/mdns_candidate.h"
 #include "desktophost/transport/peer_connection.h"
@@ -105,7 +106,7 @@ void printUsage() {
         "  --stun <urls>       comma-separated STUN servers, or 'none' for host\n"
         "                      candidates only (default: Cloudflare, Google and\n"
         "                      Twilio on port 3478)\n"
-        "  --no-input          stream only; refuse pointer control from the phone\n"
+        "  --no-input          stream only; refuse pointer and keyboard control\n"
         "  --record <path>     output file (default: capture.h264)\n"
         "  --seconds <n>       recording duration (default: 10)\n"
         "  --fps <n>           frame rate ceiling (default: 60)\n"
@@ -348,6 +349,9 @@ struct Session {
     std::unique_ptr<desktophost::IPeerConnection> peer;
     std::unique_ptr<desktophost::IInputInjector> injector;
     std::unique_ptr<desktophost::InputRouter> router;
+    // Same injector, separate router: keys arrive on their own ordered,
+    // reliable channel and need none of the pointer router's repair logic.
+    std::unique_ptr<desktophost::KeyboardRouter> keyboard;
 
     // Published only once each stage is running; the capture and encoder
     // threads read these rather than the unique_ptrs, which the session
@@ -357,6 +361,7 @@ struct Session {
     // Read by libdatachannel's thread on every input message and by the main
     // loop's deadman tick.
     std::atomic<desktophost::InputRouter*> liveRouter{nullptr};
+    std::atomic<desktophost::KeyboardRouter*> liveKeyboard{nullptr};
 };
 
 void stopSession(const std::shared_ptr<Session>& session) {
@@ -367,10 +372,15 @@ void stopSession(const std::shared_ptr<Session>& session) {
     session->liveEncoder.store(nullptr);
     session->livePeer.store(nullptr);
     session->liveRouter.store(nullptr);
+    session->liveKeyboard.store(nullptr);
 
     // Before the peer connection goes: no pointerUp can arrive after this, so
     // anything still held has to be let go here or the desktop is left with a
-    // stuck mouse button and no way to hear about it.
+    // stuck mouse button and no way to hear about it. Keys first, so a held
+    // Shift is not still down when the button releases.
+    if (session->keyboard) {
+        session->keyboard->releaseAll();
+    }
     if (session->router) {
         session->router->releaseAll();
     }
@@ -487,6 +497,8 @@ int runServe(const Options& options) {
             } else {
                 session->router = std::make_unique<desktophost::InputRouter>(
                     session->injector.get());
+                session->keyboard = std::make_unique<desktophost::KeyboardRouter>(
+                    session->injector.get());
             }
         }
 
@@ -550,6 +562,16 @@ int runServe(const Options& options) {
                 router->releaseAll();
             }
         };
+        peerCallbacks.onKeyMessage = [session](std::string message) {
+            if (auto* keyboard = session->liveKeyboard.load()) {
+                keyboard->handleMessage(message);
+            }
+        };
+        peerCallbacks.onKeyChannelClosed = [session] {
+            if (auto* keyboard = session->liveKeyboard.load()) {
+                keyboard->releaseAll();
+            }
+        };
 
         if (auto status = session->peer->start(std::move(peerCallbacks)); status.failed()) {
             std::fprintf(stderr, "transport failed to start: %s\n", status.message().c_str());
@@ -561,6 +583,7 @@ int runServe(const Options& options) {
         session->livePeer.store(session->peer.get());
         session->liveEncoder.store(session->encoder.get());
         session->liveRouter.store(session->router.get());
+        session->liveKeyboard.store(session->keyboard.get());
 
         std::shared_ptr<Session> previous;
         {

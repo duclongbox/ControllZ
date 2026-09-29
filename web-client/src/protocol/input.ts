@@ -115,3 +115,27 @@ export function encodePointerMessage(intent: PointerIntent, seq: number, at: num
 
   return JSON.stringify(message)
 }
+
+/**
+ * One physical key going down or up, for the `keys` channel — ordered and
+ * reliable, unlike everything above (shared/schemas/input/key.schema.json).
+ *
+ * `code` is `KeyboardEvent.code`, a position. The desktop's own layout decides
+ * the character, so this never carries one.
+ */
+export interface KeyIntent {
+  kind: 'down' | 'up'
+  code: string
+  /** An autorepeat from the sender's OS. Only meaningful on `down`. */
+  repeat: boolean
+}
+
+export function encodeKeyMessage(intent: KeyIntent, at: number): string {
+  const message: Record<string, unknown> = {
+    type: intent.kind === 'down' ? 'keyDown' : 'keyUp',
+    code: intent.code,
+    t: at,
+  }
+  if (intent.kind === 'down' && intent.repeat) message.repeat = true
+  return JSON.stringify(message)
+}

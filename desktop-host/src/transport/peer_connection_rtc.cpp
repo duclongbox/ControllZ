@@ -117,6 +117,7 @@ public:
 
             if (config_.enableInputChannel) {
                 openInputChannel();
+                openKeyChannel();
             }
 
             // Generating the offer is what starts ICE gathering.
@@ -163,6 +164,30 @@ public:
 
         std::lock_guard<std::mutex> lock(mutex_);
         inputChannel_ = std::move(channel);
+    }
+
+    /// Keyboard. Default DataChannelInit is ordered and fully reliable, which
+    /// is the point — see PeerConnectionConfig::keyChannelLabel. Created
+    /// alongside the input channel, before the offer, for the same reason.
+    void openKeyChannel() {
+        auto channel = pc_->createDataChannel(config_.keyChannelLabel, rtc::DataChannelInit{});
+
+        channel->onMessage([this](rtc::message_variant message) {
+            if (const auto* text = std::get_if<std::string>(&message)) {
+                if (callbacks_.onKeyMessage) {
+                    callbacks_.onKeyMessage(*text);
+                }
+            }
+        });
+
+        channel->onClosed([this] {
+            if (callbacks_.onKeyChannelClosed) {
+                callbacks_.onKeyChannelClosed();
+            }
+        });
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        keyChannel_ = std::move(channel);
     }
 
     void setRemoteDescription(const std::string& sdp, const std::string& type) override {
@@ -225,6 +250,7 @@ public:
     void close() override {
         std::shared_ptr<rtc::Track> track;
         std::shared_ptr<rtc::DataChannel> input;
+        std::shared_ptr<rtc::DataChannel> keys;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             track = std::move(track_);
@@ -232,15 +258,20 @@ public:
             rtpConfig_.reset();
             input = std::move(inputChannel_);
             inputChannel_.reset();
+            keys = std::move(keyChannel_);
+            keyChannel_.reset();
         }
-        if (input != nullptr) {
+        for (const auto& channel : {input, keys}) {
+            if (channel == nullptr) {
+                continue;
+            }
             // Drop the handlers before closing: onClosed fires during this
             // teardown, and the session it would call back into is the one
             // being destroyed.
-            input->onMessage(nullptr);
-            input->onClosed(nullptr);
+            channel->onMessage(nullptr);
+            channel->onClosed(nullptr);
             try {
-                input->close();
+                channel->close();
             } catch (const std::exception&) {
             }
         }
@@ -271,6 +302,7 @@ private:
     std::shared_ptr<rtc::Track> track_;
     std::shared_ptr<rtc::RtpPacketizationConfig> rtpConfig_;
     std::shared_ptr<rtc::DataChannel> inputChannel_;
+    std::shared_ptr<rtc::DataChannel> keyChannel_;
 
     // Only the sending thread reads or writes this.
     std::optional<int64_t> baseUs_;

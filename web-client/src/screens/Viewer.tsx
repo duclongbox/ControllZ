@@ -12,6 +12,7 @@ import { getDevice, markConnected } from '../store/devices'
 import { setPref, usePrefs } from '../store/prefs'
 import type { PointerMode, QualityPriority, SessionState } from '../session/types'
 import { atRevealEdge, REVEAL_DWELL_MS } from '../viewer/chromeReveal'
+import { ALTGR_WINDOW_MS, KeyboardControl, detectPlatform, isModifier } from '../viewer/keyboardControl'
 import { PointerControl } from '../viewer/pointerControl'
 import type { StagePointerSample, StageWheelSample } from '../viewer/pointerControl'
 import { VideoStage } from '../viewer/VideoStage'
@@ -32,6 +33,17 @@ import { SessionEnded } from './SessionEnded'
 import styles from './Viewer.module.css'
 
 type Overlay = Exclude<ViewerAction, 'fullscreen'> | null
+
+/** A text field of our own, which keeps its keystrokes. */
+function isEditable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  )
+}
 
 const QUALITY_OPTIONS: Array<{ value: QualityPriority; label: string; sub: string }> = [
   { value: 'auto', label: 'Automatic', sub: 'Adapts to the link, 1 s loop' },
@@ -191,14 +203,84 @@ export function Viewer() {
     setLatched((keys) => (keys.includes(code) ? keys.filter((k) => k !== code) : [...keys, code]))
   }, [])
 
+  // The on-screen bar: a tap is a whole keystroke, with any latched modifiers
+  // wrapped around it — pressed first, released last, like a hand would.
   const sendKey = useCallback(
     (code: string) => {
-      client.sendKey('down', code, latched)
-      client.sendKey('up', code, latched)
+      const modifiers = latched.filter(isModifier)
+      for (const modifier of modifiers) client.sendKey({ kind: 'down', code: modifier, repeat: false })
+      client.sendKey({ kind: 'down', code, repeat: false })
+      client.sendKey({ kind: 'up', code, repeat: false })
+      for (const modifier of [...modifiers].reverse()) {
+        client.sendKey({ kind: 'up', code: modifier, repeat: false })
+      }
       setLatched([])
     },
     [client, latched],
   )
+
+  // The physical keyboard. Listened to on the window, not the stage: the
+  // stage never takes focus, and keys should reach the desktop wherever the
+  // mouse happens to be.
+  const keyboardRef = useRef<KeyboardControl | null>(null)
+  if (keyboardRef.current === null) keyboardRef.current = new KeyboardControl(detectPlatform())
+  const keyboard = keyboardRef.current
+  const streaming = state.phase === 'streaming'
+
+  useEffect(() => {
+    if (!streaming) return
+    let flushTimer: ReturnType<typeof setTimeout> | undefined
+
+    const send = (intents: ReturnType<KeyboardControl['releaseAll']>) => {
+      for (const intent of intents) client.sendKey(intent)
+    }
+
+    const onKey = (event: KeyboardEvent) => {
+      // A field in one of our own panels keeps its keys.
+      if (isEditable(event.target)) return
+      // Everything else is the desktop's: Tab must not move our focus, Space
+      // must not scroll our page, Backspace must not navigate back. Keys the
+      // browser or the OS reserve (Ctrl+W, Alt+Tab) never reach a page at
+      // all — capturing those is the deferred shortcut work.
+      event.preventDefault()
+      send(
+        keyboard.handle({
+          type: event.type === 'keydown' ? 'keydown' : 'keyup',
+          code: event.code,
+          repeat: event.repeat,
+          at: event.timeStamp,
+        }),
+      )
+      clearTimeout(flushTimer)
+      if (keyboard.hasPending()) {
+        flushTimer = setTimeout(() => send(keyboard.flushPending()), ALTGR_WINDOW_MS)
+      }
+    }
+
+    // Every way the keyups stop coming: the window loses focus (Alt+Tab,
+    // clicking another app), the tab is hidden, the page is going away.
+    const releaseAll = () => {
+      clearTimeout(flushTimer)
+      send(keyboard.releaseAll())
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') releaseAll()
+    }
+
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKey, true)
+    window.addEventListener('blur', releaseAll)
+    window.addEventListener('pagehide', releaseAll)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKey, true)
+      window.removeEventListener('blur', releaseAll)
+      window.removeEventListener('pagehide', releaseAll)
+      document.removeEventListener('visibilitychange', onVisibility)
+      releaseAll()
+    }
+  }, [client, keyboard, streaming])
 
   // ---- non-streaming phases render their own screen -----------------------
 
