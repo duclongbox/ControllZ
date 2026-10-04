@@ -64,6 +64,7 @@ class FakeDataChannel {
   readyState: RTCDataChannelState = 'open'
   sent: string[] = []
   onclose: (() => void) | null = null
+  onmessage: ((event: { data: unknown }) => void) | null = null
 
   constructor(label: string) {
     this.label = label
@@ -651,6 +652,26 @@ describe('wsClient input channel', () => {
       { type: 'keyUp', code: 'KeyA', t: expect.any(Number) },
     ])
     expect(keys.readyState).not.toBe('closed')
+    client.dispose()
+  })
+
+  it('learns the host OS from the hello on the keys channel', async () => {
+    const { client, peer } = await streaming()
+    const keys = peer.offerDataChannel('keys')
+    expect(client.getState().hostPlatform).toBeNull()
+
+    keys.onmessage?.({ data: '{"platform":"windows","type":"hostInfo"}' })
+    expect(client.getState().hostPlatform).toBe('windows')
+    client.dispose()
+  })
+
+  it('ignores anything else the keys channel carries back', async () => {
+    const { client, peer } = await streaming()
+    const keys = peer.offerDataChannel('keys')
+    keys.onmessage?.({ data: '{"type":"keyDown","code":"KeyA"}' })
+    keys.onmessage?.({ data: '{"type":"hostInfo","platform":"beos"}' })
+    keys.onmessage?.({ data: new ArrayBuffer(8) })
+    expect(client.getState().hostPlatform).toBeNull()
     client.dispose()
   })
 

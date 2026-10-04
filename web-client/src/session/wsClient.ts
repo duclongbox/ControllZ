@@ -1,4 +1,4 @@
-import { encodeKeyMessage, encodePointerMessage } from '../protocol/input'
+import { encodeKeyMessage, encodePointerMessage, parseHostInfo } from '../protocol/input'
 import type { KeyIntent, PointerIntent } from '../protocol/input'
 import type { RejectReason } from '../protocol/types'
 import type { SessionClient } from './client'
@@ -441,6 +441,12 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
 
   function attachKeyChannel(channel: RTCDataChannel) {
     keyChannel = channel
+    // The one thing the desktop says on this channel: which OS it is, sent as
+    // the channel opens. Anything else arriving here is not ours and is dropped.
+    channel.onmessage = (event) => {
+      const platform = parseHostInfo(event.data)
+      if (platform) patch({ hostPlatform: platform })
+    }
     channel.onclose = () => {
       if (keyChannel === channel) keyChannel = null
     }

@@ -172,6 +172,23 @@ public:
     void openKeyChannel() {
         auto channel = pc_->createDataChannel(config_.keyChannelLabel, rtc::DataChannelInit{});
 
+        if (!config_.keyChannelHello.empty()) {
+            // The channel is ordered and reliable, so a message sent in onOpen
+            // is guaranteed to reach the phone before anything else on it.
+            // Weak: the channel owns this closure, so a strong capture would
+            // be a cycle it never escapes.
+            std::weak_ptr<rtc::DataChannel> weak = channel;
+            channel->onOpen([weak, hello = config_.keyChannelHello] {
+                if (auto open = weak.lock()) {
+                    try {
+                        open->send(hello);
+                    } catch (const std::exception& e) {
+                        std::fprintf(stderr, "[transport] key channel hello failed: %s\n", e.what());
+                    }
+                }
+            });
+        }
+
         channel->onMessage([this](rtc::message_variant message) {
             if (const auto* text = std::get_if<std::string>(&message)) {
                 if (callbacks_.onKeyMessage) {

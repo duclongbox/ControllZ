@@ -4,7 +4,12 @@
 #include "desktophost/input/input_protocol.h"
 
 using Catch::Approx;
+using desktophost::currentHostPlatform;
+using desktophost::encodeHostInfo;
+using desktophost::HostPlatform;
+using desktophost::hostPlatformName;
 using desktophost::MouseButton;
+using desktophost::parseKeyMessage;
 using desktophost::parsePointerMessage;
 using desktophost::PointerAction;
 
@@ -123,4 +128,28 @@ TEST_CASE("malformed and hostile messages are rejected") {
                     R"({"type":"pointerDown","seq":1,"nx":0,"ny":0,"buttons":1,)"
                     R"("button":"left","clickCount":9})")
                     .has_value());
+}
+
+TEST_CASE("hostInfo names the platform by its wire name") {
+    // shared/schemas/input/hostInfo.schema.json: the phone switches on these
+    // exact strings to decide whether to swap Cmd and Ctrl.
+    CHECK(encodeHostInfo(HostPlatform::windows) == R"({"platform":"windows","type":"hostInfo"})");
+    CHECK(encodeHostInfo(HostPlatform::mac) == R"({"platform":"mac","type":"hostInfo"})");
+    CHECK(encodeHostInfo(HostPlatform::linux) == R"({"platform":"linux","type":"hostInfo"})");
+}
+
+TEST_CASE("the built platform is one the schema allows") {
+    const auto name = hostPlatformName(currentHostPlatform());
+    CHECK((name == "windows" || name == "mac" || name == "linux"));
+#if defined(_WIN32)
+    CHECK(currentHostPlatform() == HostPlatform::windows);
+#elif defined(__APPLE__)
+    CHECK(currentHostPlatform() == HostPlatform::mac);
+#endif
+}
+
+TEST_CASE("hostInfo is not mistaken for a key by the key parser") {
+    // It shares the channel with keyDown/keyUp; a host that received its own
+    // hello back must drop it, not type it.
+    CHECK_FALSE(parseKeyMessage(encodeHostInfo(HostPlatform::mac)).has_value());
 }

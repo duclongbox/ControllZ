@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/hostInfo.schema.json",
+  "title": "hostInfo",
+  "description": "Desktop -> phone, on the `keys` channel, once, the moment the channel opens. The only message that travels this way on an input channel. It tells the phone which OS it is typing into, so the phone can translate shortcut modifiers before they go on the wire: a Mac's Command key sits where a PC's Windows key does, so Cmd+C sent by position arrives on a Windows host as Win+C. Knowing the host is Windows, the phone sends Ctrl+C instead (see web-client/src/viewer/shortcutTranslation.ts). The host itself still maps every code by position and never remaps -- the choice stays with the user, on the phone, where the preference lives. A phone that never receives this (an older host) translates nothing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "platform"],
+  "properties": {
+    "type": { "const": "hostInfo" },
+    "platform": {
+      "type": "string",
+      "enum": ["windows", "mac", "linux"],
+      "description": "The OS whose shortcuts apply on the desktop. `mac` is the Command family; everything else is the Control family."
+    }
+  }
+}

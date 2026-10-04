@@ -139,3 +139,33 @@ export function encodeKeyMessage(intent: KeyIntent, at: number): string {
   if (intent.kind === 'down' && intent.repeat) message.repeat = true
   return JSON.stringify(message)
 }
+
+/**
+ * The desktop's OS, from the one desktop → phone message on an input channel
+ * (shared/schemas/input/hostInfo.schema.json). `mac` is the Command family;
+ * the other two are the Control family. Null until the host has said.
+ */
+export const HOST_PLATFORMS = ['windows', 'mac', 'linux'] as const
+export type HostPlatform = (typeof HOST_PLATFORMS)[number]
+
+/**
+ * The host's `hostInfo` hello, or null for anything else. Anything else
+ * includes garbage: the peer is untrusted, so an unknown platform is ignored
+ * rather than guessed at — the phone then translates nothing, which is what
+ * it did before the message existed.
+ */
+export function parseHostInfo(data: unknown): HostPlatform | null {
+  if (typeof data !== 'string') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const message = parsed as Record<string, unknown>
+  if (message.type !== 'hostInfo') return null
+  return (HOST_PLATFORMS as readonly unknown[]).includes(message.platform)
+    ? (message.platform as HostPlatform)
+    : null
+}

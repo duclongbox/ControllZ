@@ -101,6 +101,32 @@ std::optional<KeyMessage> parseKeyMessage(std::string_view json) {
     return message;
 }
 
+HostPlatform currentHostPlatform() {
+#if defined(_WIN32)
+    return HostPlatform::windows;
+#elif defined(__APPLE__)
+    return HostPlatform::mac;
+#else
+    return HostPlatform::linux;
+#endif
+}
+
+std::string_view hostPlatformName(HostPlatform platform) {
+    switch (platform) {
+    case HostPlatform::windows:
+        return "windows";
+    case HostPlatform::mac:
+        return "mac";
+    case HostPlatform::linux:
+        return "linux";
+    }
+    return "linux";
+}
+
+std::string encodeHostInfo(HostPlatform platform) {
+    return Json{{"type", "hostInfo"}, {"platform", std::string(hostPlatformName(platform))}}.dump();
+}
+
 std::optional<PointerMessage> parsePointerMessage(std::string_view json) {
     // Non-throwing parse: a malformed message from a remote peer is an
     // expected event on this channel, not an exceptional one.

@@ -75,7 +75,8 @@ must not try to infer the difference.
 ## Input catalog — the data plane
 
 `schemas/input/` is a **separate catalog** (`schemas/input/catalog.json`) for
-messages that travel phone → desktop on the WebRTC input DataChannel. It is
+messages that travel phone → desktop on the WebRTC input DataChannels (with one
+desktop → phone exception, `hostInfo`, below). It is
 deliberately not part of `schemas/catalog.json`: that one mirrors the sealed
 `SignalingMessage` hierarchy, and `signaling-server` never sees an input
 message. Listing them together would imply a parity the server does not have —
@@ -89,6 +90,7 @@ architecture promises they never do.
 | `pointerUp` | + `button, clickCount` | orphan ups synthesise a press host-side |
 | `scroll` | + `dx, dy` | the one delta on `input`; deltas commute, so never stale-dropped |
 | `keyDown` / `keyUp` | `code, repeat?, t` | **`keys` channel** — ordered and reliable; see below |
+| `hostInfo` | `platform` | **`keys` channel, desktop → phone**, once, when the channel opens; drives Cmd ⇄ Ctrl translation on the phone |
 
 **Keyboard has its own channel.** Everything above rides `input`, which is
 unordered with no retransmits: a pointer sample is superseded by the next one.
@@ -97,6 +99,14 @@ ride `keys`, an ordered, reliable channel. Two channels are two SCTP streams: a
 lost keystroke delays only the keys behind it, and pointer traffic never waits
 on a key retransmit (or vice versa). `code` is a physical position
 (`KeyboardEvent.code`); the host's own layout decides the character.
+
+**Shortcut modifiers are translated on the phone, not the host.** Command on a
+Mac keyboard and the Windows key on a PC keyboard are the same position
+(`MetaLeft`), so Cmd+C sent by position reaches a Windows host as Win+C. The
+host announces its OS with `hostInfo` the moment `keys` opens, and when exactly
+one side is a Mac the phone swaps Meta and Control before sending (a user
+preference, default automatic). The host stays a position mapper and never
+remaps, so a host that never says `hostInfo` simply gets untranslated keys.
 
 Two conventions here differ from the control plane above, both for the same
 reason — the `input` channel is **unordered and unreliable**:
@@ -109,8 +119,9 @@ reason — the `input` channel is **unordered and unreliable**:
   to permanently wrong state. The host reconciles its held buttons against
   `buttons` on every message, which is how a lost `pointerUp` heals.
 
-Deferred, and absent from the catalog until they exist: `scroll`, `keyDown` /
-`keyUp`.
+Deferred, and absent from the catalog until it exists: capturing
+browser-reserved combos (Ctrl+W, Ctrl+T, Alt+Tab) with the Keyboard Lock API.
+Until then the phone warns before the browser acts on them.
 
 ## REST API
 

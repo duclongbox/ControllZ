@@ -13,6 +13,7 @@
 
 #include "desktophost/encode/encoded_frame.h"
 #include "desktophost/transport/mdns_candidate.h"
+#include "desktophost/input/input_protocol.h"
 #include "desktophost/transport/peer_connection.h"
 
 using namespace desktophost;
@@ -171,7 +172,9 @@ TEST_CASE("input can be left out of the offer entirely", "[transport]") {
 // behind a retransmit.
 TEST_CASE("keys ride their own ordered, reliable channel; pointer stays unordered and lossy",
           "[transport]") {
-    auto host = makePeerConnection(offlineConfig());
+    PeerConnectionConfig config = offlineConfig();
+    config.keyChannelHello = encodeHostInfo(HostPlatform::mac);
+    auto host = makePeerConnection(config);
     REQUIRE(host != nullptr);
 
     auto viewer = std::make_shared<rtc::PeerConnection>(rtc::Configuration{});
@@ -181,6 +184,7 @@ TEST_CASE("keys ride their own ordered, reliable channel; pointer stays unordere
     std::map<std::string, rtc::Reliability> offered;
     std::vector<std::shared_ptr<rtc::DataChannel>> keepAlive;
     std::string keyMessage;
+    std::vector<std::string> viewerReceived;
 
     viewer->onLocalDescription([&](rtc::Description answer) {
         host->setRemoteDescription(std::string(answer), answer.typeString());
@@ -195,6 +199,13 @@ TEST_CASE("keys ride their own ordered, reliable channel; pointer stays unordere
                 if (auto open = weak.lock()) {
                     open->send(std::string(R"({"type":"keyDown","code":"KeyA","t":1})"));
                 }
+            });
+            channel->onMessage([&](rtc::message_variant message) {
+                if (const auto* text = std::get_if<std::string>(&message)) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    viewerReceived.push_back(*text);
+                }
+                changed.notify_all();
             });
         }
         {
@@ -226,8 +237,9 @@ TEST_CASE("keys ride their own ordered, reliable channel; pointer stays unordere
 
     {
         std::unique_lock<std::mutex> lock(mutex);
-        REQUIRE(changed.wait_for(lock, std::chrono::seconds(10),
-                                 [&] { return offered.size() == 2 && !keyMessage.empty(); }));
+        REQUIRE(changed.wait_for(lock, std::chrono::seconds(10), [&] {
+            return offered.size() == 2 && !keyMessage.empty() && !viewerReceived.empty();
+        }));
 
         REQUIRE(offered.count("keys") == 1);
         const rtc::Reliability& keys = offered["keys"];
@@ -243,6 +255,12 @@ TEST_CASE("keys ride their own ordered, reliable channel; pointer stays unordere
 
         // And a key sent by the viewer comes out of the keys callback.
         CHECK(keyMessage == R"({"type":"keyDown","code":"KeyA","t":1})");
+
+        // The host's hello is the first thing the viewer sees on the keys
+        // channel: the one desktop -> phone message on an input channel, sent
+        // on open so it beats any keystroke the phone could send.
+        REQUIRE(viewerReceived.size() == 1);
+        CHECK(viewerReceived.front() == R"({"platform":"mac","type":"hostInfo"})");
     }
 
     host->close();

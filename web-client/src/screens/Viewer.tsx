@@ -13,6 +13,14 @@ import { setPref, usePrefs } from '../store/prefs'
 import type { PointerMode, QualityPriority, SessionState } from '../session/types'
 import { atRevealEdge, REVEAL_DWELL_MS } from '../viewer/chromeReveal'
 import { ALTGR_WINDOW_MS, KeyboardControl, detectPlatform, isModifier } from '../viewer/keyboardControl'
+import type { ClientPlatform } from '../viewer/keyboardControl'
+import {
+  browserShortcutModifiers,
+  escapedToBrowser,
+  reservedShortcutLabels,
+  shouldSwapModifiers,
+  translateIntent,
+} from '../viewer/shortcutTranslation'
 import { PointerControl } from '../viewer/pointerControl'
 import type { StagePointerSample, StageWheelSample } from '../viewer/pointerControl'
 import { VideoStage } from '../viewer/VideoStage'
@@ -33,6 +41,16 @@ import { SessionEnded } from './SessionEnded'
 import styles from './Viewer.module.css'
 
 type Overlay = Exclude<ViewerAction, 'fullscreen'> | null
+
+/**
+ * What the viewer has to say about the physical keyboard. `reserved` is the
+ * once-a-session heads-up that some chords never leave the browser; `escaped`
+ * is the after-the-fact note that one just did.
+ */
+type KeyNotice = 'reserved' | 'escaped' | null
+
+/** How long a keyboard notice stays up on its own. */
+const KEY_NOTICE_MS = 8000
 
 /** A text field of our own, which keeps its keystrokes. */
 function isEditable(target: EventTarget | null): boolean {
@@ -76,6 +94,7 @@ export function Viewer() {
   const [overlay, setOverlay] = useState<Overlay>(prefs.showStats ? 'stats' : null)
   const [pointerMode, setPointerMode] = useState<PointerMode>(prefs.pointerMode)
   const [latched, setLatched] = useState<string[]>([])
+  const [keyNotice, setKeyNotice] = useState<KeyNotice>(null)
 
   // The virtual cursor lives in PointerControl, not in React state: it is
   // updated on every pointer sample, and routing 120 Hz of that through a
@@ -222,17 +241,60 @@ export function Viewer() {
   // The physical keyboard. Listened to on the window, not the stage: the
   // stage never takes focus, and keys should reach the desktop wherever the
   // mouse happens to be.
+  const platformRef = useRef<ClientPlatform | null>(null)
+  if (platformRef.current === null) platformRef.current = detectPlatform()
+  const platform = platformRef.current
   const keyboardRef = useRef<KeyboardControl | null>(null)
-  if (keyboardRef.current === null) keyboardRef.current = new KeyboardControl(detectPlatform())
+  if (keyboardRef.current === null) keyboardRef.current = new KeyboardControl(platform)
   const keyboard = keyboardRef.current
   const streaming = state.phase === 'streaming'
+
+  // Cmd ⇄ Ctrl. Read through a ref so a change does not re-run the listener
+  // effect below (which would release every key as a side effect); instead,
+  // the keys held under the old mapping are released under it first, or the
+  // desktop would be left holding a Ctrl whose keyup arrives as a Cmd.
+  const swap = shouldSwapModifiers(prefs.shortcutModifiers, platform, state.hostPlatform)
+  const swapRef = useRef(swap)
+  useEffect(() => {
+    if (swapRef.current === swap) return
+    for (const intent of keyboard.releaseAll()) {
+      client.sendKey(translateIntent(intent, swapRef.current))
+    }
+    swapRef.current = swap
+  }, [client, keyboard, swap])
+
+  // A keyboard notice goes away on its own; the user can also dismiss it.
+  useEffect(() => {
+    if (keyNotice === null) return
+    const timer = setTimeout(() => setKeyNotice(null), KEY_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [keyNotice])
+
+  // Ctrl+W, Cmd+W and Cmd+Q cannot be cancelled by a page — but a page can
+  // make the browser ask first. The prompt is the browser's own; its text is
+  // not ours to write. This is the only "before" hook there is for a chord the
+  // browser keeps, so it runs for the whole of a live session.
+  useEffect(() => {
+    if (!streaming) return
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      // Legacy engines want a string; modern ones ignore it. Both ways ask.
+      event.returnValue = 'A remote session is live.'
+    }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [streaming])
 
   useEffect(() => {
     if (!streaming) return
     let flushTimer: ReturnType<typeof setTimeout> | undefined
+    // The heads-up about browser-owned chords is shown once per session, the
+    // first time the modifier they are built on goes down.
+    let reservedShown = false
+    const browserModifiers = browserShortcutModifiers(platform)
 
     const send = (intents: ReturnType<KeyboardControl['releaseAll']>) => {
-      for (const intent of intents) client.sendKey(intent)
+      for (const intent of intents) client.sendKey(translateIntent(intent, swapRef.current))
     }
 
     const onKey = (event: KeyboardEvent) => {
@@ -241,8 +303,13 @@ export function Viewer() {
       // Everything else is the desktop's: Tab must not move our focus, Space
       // must not scroll our page, Backspace must not navigate back. Keys the
       // browser or the OS reserve (Ctrl+W, Alt+Tab) never reach a page at
-      // all — capturing those is the deferred shortcut work.
+      // all — capturing those (Keyboard Lock) is the deferred shortcut work;
+      // until then the user is told, before (here) and after (on blur).
       event.preventDefault()
+      if (event.type === 'keydown' && !reservedShown && browserModifiers.includes(event.code)) {
+        reservedShown = true
+        setKeyNotice('reserved')
+      }
       send(
         keyboard.handle({
           type: event.type === 'keydown' ? 'keydown' : 'keyup',
@@ -257,30 +324,37 @@ export function Viewer() {
       }
     }
 
-    // Every way the keyups stop coming: the window loses focus (Alt+Tab,
-    // clicking another app), the tab is hidden, the page is going away.
     const releaseAll = () => {
       clearTimeout(flushTimer)
       send(keyboard.releaseAll())
     }
+    // Every way the keyups stop coming: the window loses focus (Alt+Tab,
+    // clicking another app), the tab is hidden, the page is going away. A
+    // modifier held at that moment means a chord the browser or OS took for
+    // itself — Ctrl+T opened a tab, Alt+Tab switched apps — so say so when
+    // the user gets back.
+    const onFocusLost = () => {
+      if (escapedToBrowser(keyboard.getHeld())) setKeyNotice('escaped')
+      releaseAll()
+    }
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') releaseAll()
+      if (document.visibilityState === 'hidden') onFocusLost()
     }
 
     window.addEventListener('keydown', onKey, true)
     window.addEventListener('keyup', onKey, true)
-    window.addEventListener('blur', releaseAll)
-    window.addEventListener('pagehide', releaseAll)
+    window.addEventListener('blur', onFocusLost)
+    window.addEventListener('pagehide', onFocusLost)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('keyup', onKey, true)
-      window.removeEventListener('blur', releaseAll)
-      window.removeEventListener('pagehide', releaseAll)
+      window.removeEventListener('blur', onFocusLost)
+      window.removeEventListener('pagehide', onFocusLost)
       document.removeEventListener('visibilitychange', onVisibility)
       releaseAll()
     }
-  }, [client, keyboard, streaming])
+  }, [client, keyboard, platform, streaming])
 
   // ---- non-streaming phases render their own screen -----------------------
 
@@ -362,7 +436,31 @@ export function Viewer() {
               onEnd={() => client.end()}
             />
 
-            {state.transport === 'relayed' && overlay === null && visible ? (
+            {keyNotice === 'reserved' && overlay === null ? (
+              <ViewerBanner>
+                <Banner
+                  tone="info"
+                  icon="keyboard"
+                  title="Some shortcuts stay with the browser"
+                  action={{ label: 'Dismiss', onClick: () => setKeyNotice(null) }}
+                >
+                  {reservedShortcutLabels(platform).join(', ')} act on this browser, not on{' '}
+                  {deviceName}. Use the on-screen modifier keys to send those.
+                </Banner>
+              </ViewerBanner>
+            ) : keyNotice === 'escaped' && overlay === null ? (
+              <ViewerBanner>
+                <Banner
+                  tone="warn"
+                  icon="keyboard"
+                  title="That shortcut went to the browser"
+                  action={{ label: 'Dismiss', onClick: () => setKeyNotice(null) }}
+                >
+                  The window lost focus while a modifier was held, so the browser took the chord.
+                  Every key was released on {deviceName}.
+                </Banner>
+              </ViewerBanner>
+            ) : state.transport === 'relayed' && overlay === null && visible ? (
               <ViewerBanner>
                 <Banner tone="warn" title="Relayed connection">
                   No direct path to {deviceName}, so media is going

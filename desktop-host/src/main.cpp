@@ -17,6 +17,7 @@
 #include "desktophost/capture/test_pattern_capturer.h"
 #include "desktophost/encode/video_encoder.h"
 #include "desktophost/input/input_injector.h"
+#include "desktophost/input/input_protocol.h"
 #include "desktophost/input/input_router.h"
 #include "desktophost/input/keyboard_router.h"
 #include "desktophost/signaling/signaling_client.h"
@@ -510,6 +511,10 @@ int runServe(const Options& options) {
         }
         peerConfig.bitrateKbps = options.bitrateBps / 1000;
         peerConfig.enableInputChannel = session->router != nullptr;
+        // Tells the phone which OS it is typing into, so it can swap Cmd and
+        // Ctrl before sending. The host maps by position and never remaps.
+        peerConfig.keyChannelHello =
+            desktophost::encodeHostInfo(desktophost::currentHostPlatform());
 
         session->peer = desktophost::makePeerConnection(peerConfig);
 

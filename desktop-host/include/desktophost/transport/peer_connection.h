@@ -70,6 +70,13 @@ struct PeerConnectionConfig {
     /// would be lost and reordered. Two channels are two SCTP streams, so a
     /// lost key stalls only the keys behind it, never the pointer.
     std::string keyChannelLabel = "keys";
+
+    /// Sent to the phone on the keys channel the moment it opens, before any
+    /// key can arrive. main.cpp sets it to the `hostInfo` message
+    /// (encodeHostInfo), which tells the phone which OS it is typing into so it
+    /// can translate Cmd <-> Ctrl itself. Transport does not know what the text
+    /// means; empty sends nothing.
+    std::string keyChannelHello;
 };
 
 enum class PeerState { connecting, connected, disconnected, failed, closed };

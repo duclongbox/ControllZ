@@ -69,6 +69,23 @@ struct KeyMessage {
 /// same untrusted-peer rule as the pointer parser.
 std::optional<KeyMessage> parseKeyMessage(std::string_view json);
 
+/// Which family of shortcuts the desktop answers to
+/// (`shared/schemas/input/hostInfo.schema.json`). `mac` is the Command family;
+/// the other two are the Control family.
+enum class HostPlatform { windows, mac, linux };
+
+/// The platform this binary was built for.
+HostPlatform currentHostPlatform();
+
+/// The wire name of a platform: "windows", "mac" or "linux".
+std::string_view hostPlatformName(HostPlatform platform);
+
+/// The `hostInfo` message the host sends the phone once, on the `keys`
+/// channel, as soon as it opens. The one message that travels desktop -> phone
+/// on an input channel: it lets the phone translate Cmd <-> Ctrl before
+/// sending, so the host itself never has to remap a key.
+std::string encodeHostInfo(HostPlatform platform);
+
 /// Parses one input-channel message. Returns nullopt for anything malformed,
 /// unknown, or out of range — a remote peer is untrusted input, and the router
 /// counts a rejection rather than acting on a guess.
