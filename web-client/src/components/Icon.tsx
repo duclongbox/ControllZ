@@ -17,6 +17,8 @@ const PATHS = {
   quality: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
   fullscreen:
     'M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M16 21h3a2 2 0 002-2v-3M8 21H5a2 2 0 01-2-2v-3',
+  'fullscreen-exit':
+    'M3 8h3a2 2 0 002-2V3M21 8h-3a2 2 0 01-2-2V3M21 16h-3a2 2 0 00-2 2v3M3 16h3a2 2 0 012 2v3',
   power: 'M12 2v10M18.4 6.6a9 9 0 11-12.8 0',
   monitor: 'M2 5a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2z M8 21h8M12 17v4',
   refresh: 'M23 4v6h-6M1 20v-6h6M3.5 9a9 9 0 0114.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0020.5 15',

@@ -12,6 +12,7 @@ import { getDevice, markConnected } from '../store/devices'
 import { setPref, usePrefs } from '../store/prefs'
 import type { PointerMode, QualityPriority, SessionState } from '../session/types'
 import { atRevealEdge, REVEAL_DWELL_MS } from '../viewer/chromeReveal'
+import { isFullscreen, toggleFullscreen, useFullscreen } from '../viewer/fullscreen'
 import { ALTGR_WINDOW_MS, KeyboardControl, detectPlatform, isModifier } from '../viewer/keyboardControl'
 import type { ClientPlatform } from '../viewer/keyboardControl'
 import {
@@ -41,6 +42,20 @@ import { SessionEnded } from './SessionEnded'
 import styles from './Viewer.module.css'
 
 type Overlay = Exclude<ViewerAction, 'fullscreen'> | null
+
+/**
+ * Whether an overlay takes the stage away from the user. The side panels do:
+ * they dim the frame and are the thing being worked. The stats card, the
+ * pointer-mode control and the modifier bar are furniture *around* the frame —
+ * a readout you check while you work, keys you tap between keystrokes — and
+ * the desktop stays live underneath them. Only a covering overlay suspends
+ * pointer input, and only a covering overlay holds the chrome open: holding it
+ * for a readout would park the bars over the remote menu bar and taskbar for
+ * as long as the readout was up.
+ */
+function coversStage(overlay: Overlay): boolean {
+  return overlay === 'quality' || overlay === 'monitor'
+}
 
 /**
  * What the viewer has to say about the physical keyboard. `reserved` is the
@@ -95,6 +110,8 @@ export function Viewer() {
   const [pointerMode, setPointerMode] = useState<PointerMode>(prefs.pointerMode)
   const [latched, setLatched] = useState<string[]>([])
   const [keyNotice, setKeyNotice] = useState<KeyNotice>(null)
+  const stageCovered = coversStage(overlay)
+  const fullscreen = useFullscreen()
 
   // The virtual cursor lives in PointerControl, not in React state: it is
   // updated on every pointer sample, and routing 120 Hz of that through a
@@ -110,7 +127,7 @@ export function Viewer() {
   // setting, which is the same thing as the auto-hide being disabled.
   const { visible, wake, hold } = useAutoHide(
     prefs.hideChromeAfterMs || 3000,
-    overlay === null && prefs.hideChromeAfterMs > 0,
+    !stageCovered && prefs.hideChromeAfterMs > 0,
   )
 
   // Only while media is actually flowing: a lock held through a ten-second
@@ -129,12 +146,16 @@ export function Viewer() {
   }, [client, deviceId])
 
   useEffect(() => {
-    if (overlay !== null) hold()
-  }, [overlay, hold])
+    if (stageCovered) hold()
+  }, [stageCovered, hold])
 
   // A mouse brings the chrome back by resting on the top edge, not by moving:
-  // see viewer/chromeReveal.ts for why hover must not wake it.
+  // see viewer/chromeReveal.ts for why hover must not wake it. Once it is
+  // back it stays for as long as the mouse rests there — a bar that appears
+  // under a still mouse and then times out from under it would have to be
+  // summoned all over again — and the countdown starts when the mouse leaves.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const revealedByEdge = useRef(false)
   useEffect(() => () => clearTimeout(revealTimer.current), [])
 
   const handleStageActivity = useCallback(
@@ -149,11 +170,18 @@ export function Viewer() {
       if (atRevealEdge(sample)) {
         revealTimer.current ??= setTimeout(() => {
           revealTimer.current = undefined
-          wake()
+          revealedByEdge.current = true
+          hold()
         }, REVEAL_DWELL_MS)
-      } else if (revealTimer.current !== undefined) {
-        clearTimeout(revealTimer.current)
-        revealTimer.current = undefined
+      } else {
+        if (revealTimer.current !== undefined) {
+          clearTimeout(revealTimer.current)
+          revealTimer.current = undefined
+        }
+        if (revealedByEdge.current) {
+          revealedByEdge.current = false
+          wake()
+        }
       }
 
       for (const intent of control.handle(sample)) {
@@ -164,7 +192,7 @@ export function Viewer() {
       }
       setCursor(control.getCursor())
     },
-    [client, control, prefs.haptics, wake],
+    [client, control, hold, prefs.haptics, wake],
   )
 
   const handleWheel = useCallback(
@@ -189,11 +217,11 @@ export function Viewer() {
   // would eventually let go, but a second of stuck mouse button is a second of
   // the desktop doing something nobody asked for.
   useEffect(() => {
-    if (overlay === null) return
+    if (!stageCovered) return
     for (const intent of control.abandon()) {
       client.sendPointer(intent)
     }
-  }, [client, control, overlay])
+  }, [client, control, stageCovered])
 
   // Same hazard at the end of the session: a finger still down when the stage
   // unmounts owes the desktop a release. The host's deadman covers the case
@@ -210,7 +238,7 @@ export function Viewer() {
     (action: ViewerAction) => {
       wake()
       if (action === 'fullscreen') {
-        void document.documentElement.requestFullscreen?.().catch(() => {})
+        void toggleFullscreen()
         return
       }
       setOverlay((current) => (current === action ? null : action))
@@ -300,6 +328,11 @@ export function Viewer() {
     const onKey = (event: KeyboardEvent) => {
       // A field in one of our own panels keeps its keys.
       if (isEditable(event.target)) return
+      // In fullscreen, Esc is the browser's exit key and leaves fullscreen
+      // whatever a page does — it would reach the desktop as a stray Escape
+      // on the way out. The on-screen esc key still sends one on purpose.
+      // (The keyup that follows is dropped by KeyboardControl: never pressed.)
+      if (event.code === 'Escape' && isFullscreen()) return
       // Everything else is the desktop's: Tab must not move our focus, Space
       // must not scroll our page, Backspace must not navigate back. Keys the
       // browser or the OS reserve (Ctrl+W, Alt+Tab) never reach a page at
@@ -403,8 +436,8 @@ export function Viewer() {
         stream={state.stream}
         dim={reconnecting ? 0.66 : dim}
         onActivity={handleStageActivity}
-        onPointer={overlay === null ? handlePointer : undefined}
-        onWheel={overlay === null ? handleWheel : undefined}
+        onPointer={stageCovered ? undefined : handlePointer}
+        onWheel={stageCovered ? undefined : handleWheel}
       >
         {(box) =>
           pointerMode === 'trackpad' && !reconnecting ? (
@@ -413,9 +446,11 @@ export function Viewer() {
         }
       </VideoStage>
 
-      {/* Moving over the bars themselves keeps them up, so a mouse reaching
-          for a button is not raced by the auto-hide. */}
-      <div className={styles.chrome} onPointerMove={wake}>
+      {/* Resting on the bars keeps them up, so a mouse reaching for a button
+          is not raced by the auto-hide; the countdown starts on the way off.
+          pointerover/out bubble (enter/leave do not), and the container is
+          pointer-events: none, so only the bars and cards themselves count. */}
+      <div className={styles.chrome} onPointerOver={hold} onPointerOut={wake}>
         {reconnecting ? (
           <ReconnectOverlay onEnd={() => client.end()} />
         ) : (
@@ -431,6 +466,7 @@ export function Viewer() {
 
             <ViewerBottomBar
               active={overlay}
+              fullscreen={fullscreen}
               visible={visible}
               onAction={handleAction}
               onEnd={() => client.end()}

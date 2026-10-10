@@ -175,21 +175,26 @@
 }
 
 /* ---- modifier bar (M2) ---- */
+/* Above the bottom bar, not on top of it: at bottom: 0 the keys sat exactly
+ * over the bar's buttons, so with the keyboard open nothing on the bar — the
+ * keyboard toggle included — could be pressed. The bar's height is the 52px
+ * controls plus their padding; the floating control uses the same offset. */
 .modifiers {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
   display: flex;
   align-items: center;
   gap: var(--space-sm);
   padding:
     var(--space-md)
     calc(env(safe-area-inset-right) + var(--space-lg))
-    calc(env(safe-area-inset-bottom) + var(--space-md))
+    var(--space-md)
     calc(env(safe-area-inset-left) + var(--space-lg));
   background: var(--color-bg-base);
   border-top: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border-subtle);
   overflow-x: auto;
   scrollbar-width: none;
   pointer-events: auto;
