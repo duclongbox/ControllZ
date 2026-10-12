@@ -27,6 +27,11 @@ export function ModifierKey({
       aria-pressed={active}
       className={cn(styles.key, active && styles.active, square && styles.square)}
       onClick={() => onPress(code)}
+      // A tap must not take focus: with the soft keyboard up, focus leaving
+      // its textarea would dismiss the keyboard the bar is meant to sit on.
+      // The click still fires; only the focus change and the compatibility
+      // mouse events are cancelled.
+      onPointerDown={(event) => event.preventDefault()}
     >
       {label}
     </button>

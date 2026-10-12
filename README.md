@@ -34,7 +34,7 @@ VideoToolbox SDKs).
 ```bash
 # web-client — pick ONE, they are mutually exclusive:
 #
-#   npm run dev          direct LAN access (http://<your-lan-ip>:5173). Add
+#   npm run dev          direct LAN access Add
 #                        HTTPS=1 for a secure context, which service workers
 #                        and the PWA install prompt both require.
 #   npm run dev:tunnel   access through the tunnel URL only. This pins the HMR
@@ -65,13 +65,13 @@ npm run tunnel                       # = ngrok http 5173
 # session, tunnel a production build instead — a handful of requests:
 cd web-client && npm run build && npm run preview     
 cd web-client && npm run tunnel:preview               
-
+cd desktop-host && cmake --preset debug && cmake --build --preset debug
+./build/debug/desktop-host --serve --name "Studio Mac"
 # restart validated devices:
 rm ~/.remotehost/desktop-identity.json
 
 # desktop-host
-cd desktop-host && cmake --preset debug && cmake --build --preset debug
-./build/debug/desktop-host --serve --name "Studio Mac"
+
 ```
 
 ## Windows commands (PowerShell, Windows 10 1903+ / 11)

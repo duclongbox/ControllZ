@@ -70,6 +70,7 @@ CLAUDE.md. Breaking one is a bug, not a style disagreement.
 | `ViewerInputTrackpad` | `/session/:id` | M2 | `pointerMove/Down/Up`, `scroll` | unordered DataChannel, coalesced per rAF (scroll deltas summed) — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown/keyUp` | own ordered, reliable `keys` DataChannel; physical codes — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown`, `keyUp` | physical `code` + modifier state |
+| `ViewerSoftKeyboard` | `/session/:id` | M2 | `text`, `keyDown/keyUp` | phone only (`pointer: coarse`): Keyboard focuses a hidden textarea, the OS keyboard types into it, each change is diffed into `text` runs and Backspace/Delete/Enter/Tab presses on the `keys` channel; modifier chords with soft-keyboard text deferred — **built** |
 | `ViewerMonitors` | `/session/:id` | M2 | `setDisplay` | renegotiates, forces an IDR |
 | `ViewerQuality` | `/session/:id` | M4 | `setQualityPriority` | ladder position echoed back |
 | `ViewerRelayed` | `/session/:id` | M4 | — | candidate pair type `=== "relay"` |

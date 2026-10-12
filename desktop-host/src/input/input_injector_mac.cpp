@@ -12,6 +12,7 @@
 #include <IOKit/hidsystem/IOHIDParameter.h>
 #include <IOKit/hidsystem/IOLLEvent.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -270,7 +271,45 @@ public:
         return true;
     }
 
+    void text(std::u16string_view utf16) override {
+        // CGEventKeyboardSetUnicodeString takes a short string per event (20
+        // UniChars is the limit that holds in practice), so a run is typed as
+        // a series of events, each a full press and release — and never cut
+        // between the two halves of a surrogate pair, which would type two
+        // broken characters instead of one emoji.
+        constexpr size_t kMaxUnitsPerEvent = 20;
+        size_t start = 0;
+        while (start < utf16.size()) {
+            size_t end = std::min(utf16.size(), start + kMaxUnitsPerEvent);
+            const char16_t last = utf16[end - 1];
+            if (end < utf16.size() && last >= 0xD800 && last <= 0xDBFF) {
+                --end;
+            }
+            postUnicode(utf16.substr(start, end - start));
+            start = end;
+        }
+    }
+
 private:
+    void postUnicode(std::u16string_view chunk) const {
+        // Key code 0 is a placeholder: with a Unicode string set, the string
+        // is what the receiving app reads. No modifier flags, deliberately —
+        // the text is already what the user meant, and a Shift or Control
+        // flag on it would make a shortcut of a letter.
+        for (const bool down : {true, false}) {
+            CGEventRef event = CGEventCreateKeyboardEvent(nullptr, 0, down);
+            if (event == nullptr) {
+                return;
+            }
+            static_assert(sizeof(UniChar) == sizeof(char16_t));
+            CGEventKeyboardSetUnicodeString(event, static_cast<UniCharCount>(chunk.size()),
+                                            reinterpret_cast<const UniChar*>(chunk.data()));
+            CGEventSetFlags(event, static_cast<CGEventFlags>(0));
+            CGEventPost(kCGHIDEventTap, event);
+            CFRelease(event);
+        }
+    }
+
     CGDirectDisplayID resolveDisplay() const {
         return displayId_ == 0 ? CGMainDisplayID() : static_cast<CGDirectDisplayID>(displayId_);
     }

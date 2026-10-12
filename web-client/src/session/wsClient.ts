@@ -1,4 +1,4 @@
-import { encodeKeyMessage, encodePointerMessage, parseHostInfo } from '../protocol/input'
+import { encodeKeyMessage, encodePointerMessage, encodeTextMessage, parseHostInfo } from '../protocol/input'
 import type { KeyIntent, PointerIntent } from '../protocol/input'
 import type { RejectReason } from '../protocol/types'
 import type { SessionClient } from './client'
@@ -732,6 +732,16 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
       } catch {
         // Closed between the check and the send. The host releases every held
         // key when the channel closes, so nothing is left stuck.
+      }
+    },
+
+    sendText(text: string) {
+      // Same rules as a key: in order, never coalesced, never dropped here.
+      if (!keyChannel || keyChannel.readyState !== 'open') return
+      try {
+        keyChannel.send(encodeTextMessage(text, Date.now()))
+      } catch {
+        // Closed between the check and the send; nothing is held by text.
       }
     },
 

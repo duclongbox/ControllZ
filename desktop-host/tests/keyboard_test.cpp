@@ -29,6 +29,8 @@ struct KeyEvent {
 class FakeInjector final : public desktophost::IInputInjector {
 public:
     std::vector<KeyEvent> keys;
+    /// Runs typed through text(), in order, as UTF-16.
+    std::vector<std::u16string> typed;
     /// Codes the fake pretends this host has no key for.
     std::vector<std::string> unmapped;
 
@@ -45,6 +47,8 @@ public:
         keys.push_back(KeyEvent{std::string(code), down, repeat});
         return true;
     }
+
+    void text(std::u16string_view utf16) override { typed.emplace_back(utf16); }
 };
 
 std::string keyMessage(const char* type, const char* code, bool repeat = false) {
@@ -290,4 +294,88 @@ TEST_CASE("modifiers are recognised, CapsLock is not one") {
     CHECK(desktophost::isModifierCode("MetaLeft"));
     CHECK_FALSE(desktophost::isModifierCode("CapsLock"));
     CHECK_FALSE(desktophost::isModifierCode("KeyA"));
+}
+
+// -- text: the on-screen keyboard ---------------------------------------------
+
+TEST_CASE("text decodes to UTF-16, surrogate pairs included") {
+    const auto message =
+        desktophost::parseTextMessage(R"({"type":"text","text":"héllo 😀 你","t":7})");
+    REQUIRE(message.has_value());
+    CHECK(message->text == u"héllo 😀 你");
+    CHECK(message->text.size() == 10);  // the emoji is two units
+    CHECK(message->sentAtMs == 7);
+}
+
+TEST_CASE("text messages that are not ours are rejected") {
+    const char* rejected[] = {
+        R"({"type":"text"})",
+        R"({"type":"text","text":""})",
+        R"({"type":"text","text":42})",
+        R"({"type":"text","text":"a\nb"})",
+        R"({"type":"text","text":"a\tb"})",
+        R"({"type":"text","text":"a\u0007b"})",
+        R"({"type":"text","text":"a\u007fb"})",
+        R"({"type":"keyDown","text":"a"})",
+        R"(not json)",
+    };
+    for (const char* json : rejected) {
+        INFO(json);
+        CHECK_FALSE(desktophost::parseTextMessage(json).has_value());
+    }
+
+    // Over the schema's bound, in code points: 1024 is fine, 1025 is not —
+    // and the bound counts characters, so 1024 four-byte emoji still pass.
+    const std::string edge = R"({"type":"text","text":")" + std::string(1024, 'a') + "\"}";
+    CHECK(desktophost::parseTextMessage(edge).has_value());
+    const std::string over = R"({"type":"text","text":")" + std::string(1025, 'a') + "\"}";
+    CHECK_FALSE(desktophost::parseTextMessage(over).has_value());
+    std::string emoji = R"({"type":"text","text":")";
+    for (int i = 0; i < 1024; ++i) emoji += "😀";
+    emoji += "\"}";
+    CHECK(desktophost::parseTextMessage(emoji).has_value());
+}
+
+TEST_CASE("invalid UTF-8 is a sender to refuse, not repair") {
+    using desktophost::utf8ToUtf16;
+    CHECK(utf8ToUtf16("plain") == std::u16string(u"plain"));
+    CHECK(utf8ToUtf16("") == std::u16string());
+    CHECK(utf8ToUtf16("\xF0\x9F\x98\x80") == std::u16string(u"😀"));
+    // Truncated, bare continuation, overlong "/", a surrogate spelled in
+    // UTF-8, and a code point past U+10FFFF.
+    CHECK_FALSE(utf8ToUtf16("\xE4\xBD").has_value());
+    CHECK_FALSE(utf8ToUtf16("\x80").has_value());
+    CHECK_FALSE(utf8ToUtf16("\xC0\xAF").has_value());
+    CHECK_FALSE(utf8ToUtf16("\xED\xA0\x80").has_value());
+    CHECK_FALSE(utf8ToUtf16("\xF4\x90\x80\x80").has_value());
+}
+
+TEST_CASE("text is typed as it comes and holds nothing") {
+    FakeInjector injector;
+    KeyboardRouter router(&injector);
+
+    router.handleMessage(keyMessage("keyDown", "Backspace"));
+    router.handleMessage(keyMessage("keyUp", "Backspace"));
+    router.handleMessage(R"({"type":"text","text":"he"})");
+    router.handleMessage(R"({"type":"text","text":"llo"})");
+
+    REQUIRE(injector.typed.size() == 2);
+    CHECK(injector.typed[0] == u"he");
+    CHECK(injector.typed[1] == u"llo");
+    CHECK(injector.keys.size() == 2);
+    CHECK(router.heldCount() == 0);
+    CHECK(router.stats().textApplied == 2);
+    CHECK(router.stats().applied == 2);
+    CHECK(router.stats().invalidDropped == 0);
+}
+
+TEST_CASE("a malformed text message is counted, not typed") {
+    FakeInjector injector;
+    KeyboardRouter router(&injector);
+
+    router.handleMessage(R"({"type":"text","text":"a\nb"})");
+    router.handleMessage(R"({"type":"text","text":""})");
+
+    CHECK(injector.typed.empty());
+    CHECK(router.stats().invalidDropped == 2);
 }

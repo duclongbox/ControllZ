@@ -12,6 +12,9 @@ namespace desktophost {
 
 struct KeyboardRouterStats {
     uint64_t applied = 0;
+    /// `text` messages typed. Separate from `applied` because one message is
+    /// a whole run of characters, not a keystroke.
+    uint64_t textApplied = 0;
     uint64_t invalidDropped = 0;
     /// A key the host has no equivalent for (F21 on a Mac, say). Counted so a
     /// "that key does nothing" report can be told apart from a lost message.

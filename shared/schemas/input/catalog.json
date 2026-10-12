@@ -22,7 +22,7 @@
       "channel": "keys",
       "ordered": true,
       "reliable": true,
-      "carries": ["keyDown", "keyUp", "hostInfo"],
+      "carries": ["keyDown", "keyUp", "text", "hostInfo"],
       "why": "Typing needs every keystroke exactly once and in order. A separate channel, not a mode of `input`: on one reliable channel pointer retransmits would head-of-line block keystrokes, and on one unreliable channel keys would be lost and reordered. Two channels are two SCTP streams, so a lost key stalls only the keys behind it. Created by desktop-host alongside `input`, before the offer, for the same reason."
     }
   ],
@@ -33,9 +33,11 @@
     { "type": "scroll",      "direction": "phoneToDesktop", "schema": "scroll.schema.json" },
     { "type": "keyDown",     "direction": "phoneToDesktop", "schema": "key.schema.json", "channel": "keys" },
     { "type": "keyUp",       "direction": "phoneToDesktop", "schema": "key.schema.json", "channel": "keys" },
+    { "type": "text",        "direction": "phoneToDesktop", "schema": "text.schema.json", "channel": "keys" },
     { "type": "hostInfo",    "direction": "desktopToPhone", "schema": "hostInfo.schema.json", "channel": "keys" }
   ],
   "deferred": [
+    { "type": "soft-keyboard modifier chords", "milestone": "keyboard follow-up", "note": "Ctrl/Cmd/Alt applied to characters typed on the phone's on-screen keyboard. `text` carries characters with no modifier state, and the host types them with no flags; the on-screen modifier bar's latched modifiers wrap only the bar's own keys. Chording a soft-keyboard letter would need the phone to turn the character back into a position (impossible in general: the host's layout is what maps positions to characters) or a `text` field for modifiers that the host applies as flags." },
     { "type": "reserved shortcut capture", "milestone": "keyboard follow-up", "note": "Capturing browser- and OS-reserved combos (Ctrl+W, Ctrl+T, Alt+Tab, Win key) with the Keyboard Lock API in fullscreen, so they reach the desktop instead of the browser. Until then the phone warns (beforeunload, an in-viewer banner) and the on-screen modifier keys are the way to send them. Ctrl <-> Command translation is DONE: the phone does it from `hostInfo`." }
   ]
 }

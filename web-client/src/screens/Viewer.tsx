@@ -4,7 +4,7 @@ import { Banner } from '../components/Banner'
 import { ListGroup, ListRow } from '../components/List'
 import { SegmentedControl } from '../components/Segment'
 import type { ConnectionStatus } from '../components/StatusPill'
-import { useAutoHide, useWakeLock } from '../lib/hooks'
+import { useAutoHide, useKeyboardInset, useWakeLock } from '../lib/hooks'
 import type { NormalisedPoint } from '../lib/normalise'
 import { formatResolution } from '../lib/format'
 import { useSession, useSessionClient } from '../session/useSession'
@@ -25,6 +25,10 @@ import {
 import { PointerControl } from '../viewer/pointerControl'
 import type { StagePointerSample, StageWheelSample } from '../viewer/pointerControl'
 import { VideoStage } from '../viewer/VideoStage'
+import { SoftKeyboard } from '../viewer/SoftKeyboard'
+import type { SoftKeyboardHandle } from '../viewer/SoftKeyboard'
+import { composerKeepsKey, prefersSoftKeyboard } from '../viewer/textComposer'
+import type { ComposerIntent } from '../viewer/textComposer'
 import { FloatingControl, ViewerBanner, ViewerBottomBar, ViewerTopBar } from '../viewer/chrome'
 import type { ViewerAction } from '../viewer/chrome'
 import {
@@ -113,6 +117,14 @@ export function Viewer() {
   const stageCovered = coversStage(overlay)
   const fullscreen = useFullscreen()
 
+  // On a phone the Keyboard button raises the OS keyboard, typing through a
+  // hidden textarea (SoftKeyboard). Decided once: it is a property of the
+  // device, and flipping it mid-session would strand a focused textarea.
+  const [softKeyboard] = useState(() => prefersSoftKeyboard())
+  const softKeyboardRef = useRef<SoftKeyboardHandle>(null)
+  const composerOpen = softKeyboard && overlay === 'keyboard'
+  const keyboardInset = useKeyboardInset(composerOpen)
+
   // The virtual cursor lives in PointerControl, not in React state: it is
   // updated on every pointer sample, and routing 120 Hz of that through a
   // re-render would make the gesture rules depend on render timing. `cursor`
@@ -167,6 +179,10 @@ export function Viewer() {
 
   const handlePointer = useCallback(
     (sample: StagePointerSample) => {
+      // The stage holds focus on a touch (VideoStage `holdFocus`); this is
+      // the belt to those braces, from inside the gesture, so an OS keyboard
+      // that got dismissed anyway comes straight back.
+      if (sample.kind === 'up') softKeyboardRef.current?.focus()
       if (atRevealEdge(sample)) {
         revealTimer.current ??= setTimeout(() => {
           revealTimer.current = undefined
@@ -262,9 +278,31 @@ export function Viewer() {
         client.sendKey({ kind: 'up', code: modifier, repeat: false })
       }
       setLatched([])
+      // The remote caret moved (an arrow, an Escape): whatever the soft
+      // keyboard thinks the current word is, it no longer is.
+      softKeyboardRef.current?.reset()
     },
     [client, latched],
   )
+
+  // The soft keyboard's output: text as text, its edits as the key they are.
+  // Latched modifiers are not applied to text (deferred, see the catalog):
+  // the characters are already what the user meant.
+  const handleComposerIntent = useCallback(
+    (intent: ComposerIntent) => {
+      if (intent.kind === 'text') {
+        client.sendText(intent.text)
+        return
+      }
+      client.sendKey({ kind: 'down', code: intent.code, repeat: false })
+      client.sendKey({ kind: 'up', code: intent.code, repeat: false })
+    },
+    [client],
+  )
+
+  const handleComposerDismiss = useCallback(() => {
+    setOverlay((current) => (current === 'keyboard' ? null : current))
+  }, [])
 
   // The physical keyboard. Listened to on the window, not the stage: the
   // stage never takes focus, and keys should reach the desktop wherever the
@@ -326,8 +364,18 @@ export function Viewer() {
     }
 
     const onKey = (event: KeyboardEvent) => {
-      // A field in one of our own panels keeps its keys.
-      if (isEditable(event.target)) return
+      const composer = softKeyboardRef.current
+      if (composer?.owns(event.target)) {
+        // The soft keyboard's textarea. Its characters and edits stay with
+        // it and arrive as a diff of its content; what it cannot type —
+        // Tab, arrows, Escape, a chord from a hardware keyboard — goes on as
+        // a physical key, and the typed context is stale once it has.
+        if (composerKeepsKey(event)) return
+        if (event.type === 'keydown' && !isModifier(event.code)) composer.reset()
+      } else if (isEditable(event.target)) {
+        // A field in one of our own panels keeps its keys.
+        return
+      }
       // In fullscreen, Esc is the browser's exit key and leaves fullscreen
       // whatever a page does — it would reach the desktop as a stray Escape
       // on the way out. The on-screen esc key still sends one on purpose.
@@ -438,6 +486,7 @@ export function Viewer() {
         onActivity={handleStageActivity}
         onPointer={stageCovered ? undefined : handlePointer}
         onWheel={stageCovered ? undefined : handleWheel}
+        holdFocus={composerOpen}
       >
         {(box) =>
           pointerMode === 'trackpad' && !reconnecting ? (
@@ -526,7 +575,20 @@ export function Viewer() {
             ) : null}
 
             {overlay === 'keyboard' ? (
-              <ModifierBar latched={latched} onToggle={toggleLatch} onKey={sendKey} />
+              <ModifierBar
+                latched={latched}
+                onToggle={toggleLatch}
+                onKey={sendKey}
+                keyboardInset={keyboardInset}
+              >
+                {softKeyboard ? (
+                  <SoftKeyboard
+                    ref={softKeyboardRef}
+                    onIntent={handleComposerIntent}
+                    onDismiss={handleComposerDismiss}
+                  />
+                ) : null}
+              </ModifierBar>
             ) : null}
 
             {overlay === 'quality' ? (

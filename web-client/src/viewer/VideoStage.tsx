@@ -47,6 +47,13 @@ export interface VideoStageProps {
    * Wakes the chrome — for a touch, anyway; see the viewer for the mouse.
    */
   onActivity?: (pointerType: string) => void
+  /**
+   * Keep focus where it is on a tap. With the soft keyboard up, a touch on
+   * the stage would otherwise blur its textarea and dismiss the keyboard the
+   * user just opened. Pointer events still flow; only the focus change and
+   * the compatibility mouse events are cancelled.
+   */
+  holdFocus?: boolean
   /** Overlays that need to know where the frame actually is. */
   children?: (box: FrameBox | null) => ReactNode
 }
@@ -59,6 +66,7 @@ export function VideoStage({
   onPointer,
   onWheel,
   onActivity,
+  holdFocus = false,
   children,
 }: VideoStageProps) {
   const { ref, size } = useElementSize<HTMLDivElement>()
@@ -154,6 +162,7 @@ export function VideoStage({
   const handleDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       onActivity?.(event.pointerType)
+      if (holdFocus) event.preventDefault()
       // One pointer at a time. Multi-touch gestures are deferred, and letting a
       // second finger interleave would have it fight the first for the cursor.
       if (activePointer.current !== null) return
@@ -170,7 +179,7 @@ export function VideoStage({
       }
       emit('down', event)
     },
-    [emit, onActivity],
+    [emit, holdFocus, onActivity],
   )
 
   const handleMove = useCallback(

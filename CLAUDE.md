@@ -77,9 +77,12 @@ one is scoped deliberately to keep sessions reviewable. -->
   readback (glReadPixels-equivalent) anywhere in the capture → encode path.
 - Pointer input (moves, clicks, scroll) travels over the *unordered,
   unreliable* `input` DataChannel. Keyboard travels over its own *ordered,
-  reliable* `keys` DataChannel. Never put the two on one channel (pointer
-  retransmits would stall keystrokes, or keys would be lost/reordered), and
-  never multiplex either with video. See `shared/schemas/input/catalog.json`.
+  reliable* `keys` DataChannel — physical key positions (`keyDown`/`keyUp`)
+  and, from the phone's on-screen keyboard, runs of characters (`text`),
+  which must stay in order with the Backspaces around them. Never put the
+  two channels' traffic on one channel (pointer retransmits would stall
+  keystrokes, or keys would be lost/reordered), and never multiplex either
+  with video. See `shared/schemas/input/catalog.json`.
 - See /docs/system-design.md for the full message catalog and the reasoning
   behind each of these.
 

@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/text.schema.json",
+  "title": "text",
+  "description": "A run of CHARACTERS to type, on the `keys` channel. The one keyboard message that carries characters rather than positions, because its source has no positions: a phone's on-screen keyboard (and any IME) produces text -- autocorrected, swiped, predicted, composed -- and never says which physical key was pressed. The host types it as-is, bypassing its own layout, with no modifier flags. Everything a soft keyboard does that is NOT a character goes as a key event on the same channel: the phone turns Backspace, Delete, Enter and Tab into keyDown/keyUp of the matching position, so this never carries a control character. Rides `keys` (ordered, reliable) because typed text must arrive exactly once and in order WITH those surrounding key events -- an autocorrection is 'two Backspaces, then text', and that only means something in order. Modifier chords around soft-keyboard text (Ctrl+letter) are not represented and are deferred (see catalog.json).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "text"],
+  "properties": {
+    "type": { "const": "text" },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "description": "The characters to type, in order. 1 to 1024 code points, no control characters. A longer run is split by the sender; the bound keeps a hostile peer from handing the host an unbounded string."
+    },
+    "t": {
+      "type": "integer",
+      "description": "Sender's Date.now(), ms. Diagnostics only."
+    }
+  }
+}

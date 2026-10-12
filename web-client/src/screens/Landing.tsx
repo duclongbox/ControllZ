@@ -1,3 +1,4 @@
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
@@ -48,6 +49,77 @@ const CLAIMS: Array<[IconName, string, string]> = [
   ],
 ]
 
+/* The two ways in, named by what the visitor is holding: a phone that wants a
+ * computer, or the computer itself. "Open the app" used to sit here and go to
+ * `/`, which on a desktop with nothing paired comes straight back to this
+ * page — a button that does nothing. */
+const WAYS_IN = [
+  {
+    to: '/pair/code',
+    icon: 'phone',
+    title: 'Connect to a computer',
+    body: 'On your phone, with the code the desktop app is showing.',
+  },
+  {
+    to: '/install',
+    icon: 'download',
+    title: 'Set up this computer',
+    body: 'Install the desktop app on the Mac or PC you want to reach.',
+  },
+] as const satisfies ReadonlyArray<{ to: string; icon: IconName; title: string; body: string }>
+
+function GetStartedMenu() {
+  const [open, setOpen] = useState(false)
+  const wrap = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+
+  // Anywhere outside the menu, or Escape, closes it. Choosing an item is a
+  // navigation, which unmounts the page and the menu with it.
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={wrap} className={styles.menuWrap}>
+      <Button
+        label="Get started"
+        icon={open ? 'chevron-up' : 'chevron-down'}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => setOpen((o) => !o)}
+      />
+      {open ? (
+        <div id={menuId} role="menu" aria-label="Get started" className={styles.menu}>
+          {WAYS_IN.map((way) => (
+            <Link key={way.to} to={way.to} role="menuitem" className={styles.menuItem}>
+              <span className={styles.claimIcon}>
+                <Icon name={way.icon} size={20} />
+              </span>
+              <span className={styles.stack}>
+                <span className={styles.menuTitle}>{way.title}</span>
+                <span className={styles.claimBody}>{way.body}</span>
+              </span>
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function HeroDevice() {
   return (
     <div className={styles.device}>
@@ -97,9 +169,7 @@ export function Landing() {
             <a className={styles.navLink} href="#requirements">
               Requirements
             </a>
-            <Link to="/">
-              <Button label="Open the app" variant="secondary" />
-            </Link>
+            <GetStartedMenu />
           </span>
         </nav>
 
@@ -265,11 +335,12 @@ export function Landing() {
               <span className={styles.claimBody}>
                 Install on the computer you want to reach. The phone side is just a link.
               </span>
+              {/* The same two ways in as the nav menu, in the same words. */}
               <Link to="/install">
-                <Button label="Get it for macOS" icon="download" full />
+                <Button label="Set up this computer" icon="download" full />
               </Link>
               <Link to="/pair/code">
-                <Button label="I already have the code" variant="secondary" full />
+                <Button label="Connect to a computer" variant="secondary" full />
               </Link>
             </div>
           </div>

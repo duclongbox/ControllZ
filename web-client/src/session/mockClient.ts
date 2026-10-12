@@ -255,6 +255,10 @@ export function createMockClient(options: MockClientOptions = {}): SessionClient
       // No desktop to type into, as above.
     },
 
+    sendText(_text: string) {
+      // Likewise.
+    },
+
     restartIce() {
       if (state.phase !== 'streaming') return
       clearTimers()

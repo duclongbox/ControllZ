@@ -655,6 +655,33 @@ describe('wsClient input channel', () => {
     client.dispose()
   })
 
+  it('sends soft-keyboard text on the keys channel, in order with the keys', async () => {
+    const { client, peer } = await streaming()
+    const input = peer.offerDataChannel('input')
+    const keys = peer.offerDataChannel('keys')
+
+    client.sendKey({ kind: 'down', code: 'Backspace', repeat: false })
+    client.sendKey({ kind: 'up', code: 'Backspace', repeat: false })
+    client.sendText('héllo 😀')
+
+    expect(input.messages).toHaveLength(0)
+    // An autocorrection is "two Backspaces, then the word": only in order
+    // does it mean anything, which is why text shares the keys channel.
+    expect(keys.messages).toEqual([
+      { type: 'keyDown', code: 'Backspace', t: expect.any(Number) },
+      { type: 'keyUp', code: 'Backspace', t: expect.any(Number) },
+      { type: 'text', text: 'héllo 😀', t: expect.any(Number) },
+    ])
+    client.dispose()
+  })
+
+  it('drops text silently when the host offered no keys channel', async () => {
+    const { client, peer } = await streaming()
+    peer.offerDataChannel('input')
+    expect(() => client.sendText('a')).not.toThrow()
+    client.dispose()
+  })
+
   it('learns the host OS from the hello on the keys channel', async () => {
     const { client, peer } = await streaming()
     const keys = peer.offerDataChannel('keys')

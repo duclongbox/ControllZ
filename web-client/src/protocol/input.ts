@@ -141,6 +141,20 @@ export function encodeKeyMessage(intent: KeyIntent, at: number): string {
 }
 
 /**
+ * A run of characters from the phone's on-screen keyboard, for the `keys`
+ * channel (shared/schemas/input/text.schema.json). The one keyboard message
+ * that carries characters, because a soft keyboard has no positions to send:
+ * the host types them as-is, bypassing its own layout, with no modifiers.
+ * Never a control character — the composer turns line breaks and tabs into
+ * Enter and Tab key presses, which travel as keyDown/keyUp like any other.
+ */
+export const MAX_TEXT_LENGTH = 1024
+
+export function encodeTextMessage(text: string, at: number): string {
+  return JSON.stringify({ type: 'text', text, t: at })
+}
+
+/**
  * The desktop's OS, from the one desktop → phone message on an input channel
  * (shared/schemas/input/hostInfo.schema.json). `mac` is the Command family;
  * the other two are the Control family. Null until the host has said.

@@ -428,6 +428,14 @@ int runServe(const Options& options) {
     std::shared_ptr<Session> current;
     std::atomic<bool> disconnected{false};
 
+    // Codes expire after five minutes on the server, so the host re-issues
+    // inside that window: a host left running while you find your phone must
+    // still be pairable. Written from the signaling thread (session end) and
+    // the main loop, hence atomic.
+    constexpr auto kCodeRefresh = std::chrono::minutes(4);
+    std::atomic<std::chrono::steady_clock::time_point> nextCodeAt{
+        std::chrono::steady_clock::now() + kCodeRefresh};
+
     // Runs on the signaling thread. Everything the session needs is built
     // here, in dependency order: capture first (it decides the resolution),
     // then the encoder, then the peer connection whose offer starts ICE.
@@ -685,6 +693,13 @@ int runServe(const Options& options) {
             }
         }
         stopSession(session);
+
+        // The code on screen was issued when the last phone paired and has
+        // been ageing through the whole session, so it is usually expired by
+        // now. Re-issue immediately: the next phone to pair must not wait for
+        // the refresh timer.
+        signaling->requestPairCode();
+        nextCodeAt.store(std::chrono::steady_clock::now() + kCodeRefresh);
     };
     callbacks.onError = [](const std::string& code, const std::string& message) {
         std::fprintf(stderr, "signaling error: %s (%s)\n", message.c_str(), code.c_str());
@@ -706,13 +721,7 @@ int runServe(const Options& options) {
     // Always offer a code: pairing is idempotent on the server, and a desktop
     // with no way to show one is a desktop no new phone can ever reach.
     signaling->requestPairCode();
-
-    // Codes expire after five minutes on the server, so refresh inside that
-    // window: a host left running while you find your phone must still be
-    // pairable. Skipped while a session is live — nobody is reading the
-    // terminal then, and the code would go stale again anyway.
-    constexpr auto kCodeRefresh = std::chrono::minutes(4);
-    auto nextCodeAt = std::chrono::steady_clock::now() + kCodeRefresh;
+    nextCodeAt.store(std::chrono::steady_clock::now() + kCodeRefresh);
 
     std::printf("waiting for a paired phone (Ctrl-C to stop)\n");
     while (!g_interrupted.load() && !disconnected.load()) {
@@ -731,19 +740,14 @@ int runServe(const Options& options) {
             }
         }
 
-        if (std::chrono::steady_clock::now() < nextCodeAt) {
+        // Refreshed during a live session too. Issuing a code replaces the
+        // previous one server-side, so this is free, and it is what keeps the
+        // code valid for a second phone the moment the first one leaves.
+        if (std::chrono::steady_clock::now() < nextCodeAt.load()) {
             continue;
         }
-        nextCodeAt = std::chrono::steady_clock::now() + kCodeRefresh;
-
-        bool idle = false;
-        {
-            std::lock_guard<std::mutex> lock(sessionMutex);
-            idle = (current == nullptr);
-        }
-        if (idle) {
-            signaling->requestPairCode();
-        }
+        nextCodeAt.store(std::chrono::steady_clock::now() + kCodeRefresh);
+        signaling->requestPairCode();
     }
 
     std::shared_ptr<Session> session;

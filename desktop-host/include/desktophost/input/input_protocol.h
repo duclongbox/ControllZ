@@ -69,6 +69,31 @@ struct KeyMessage {
 /// same untrusted-peer rule as the pointer parser.
 std::optional<KeyMessage> parseKeyMessage(std::string_view json);
 
+/// A run of characters to type (`shared/schemas/input/text.schema.json`),
+/// from the phone's on-screen keyboard. The one keyboard message that carries
+/// characters rather than positions, decoded to UTF-16 here because both
+/// injection APIs (CGEventKeyboardSetUnicodeString, KEYEVENTF_UNICODE) take
+/// UTF-16 units.
+struct TextMessage {
+    std::u16string text;
+    int64_t sentAtMs = 0;
+};
+
+/// The schema's bound on one `text` message, in code points. A longer run is
+/// split by the phone; one past this is a sender to refuse, not to clamp.
+constexpr size_t kMaxTextCodePoints = 1024;
+
+/// Parses one `text` message. Nullopt for anything malformed: not ours,
+/// empty, over the bound, invalid UTF-8, or containing a control character
+/// (Enter and Backspace travel as key events, never inside text).
+std::optional<TextMessage> parseTextMessage(std::string_view json);
+
+/// Strict UTF-8 → UTF-16. Nullopt on any malformed sequence — overlong forms,
+/// surrogate code points, truncation, bytes above U+10FFFF — rather than a
+/// replacement character, because text from a remote peer that is not valid
+/// UTF-8 is a sender to refuse. Portable, so it is tested on every platform.
+std::optional<std::u16string> utf8ToUtf16(std::string_view utf8);
+
 /// Which family of shortcuts the desktop answers to
 /// (`shared/schemas/input/hostInfo.schema.json`). `mac` is the Command family;
 /// the other two are the Control family.

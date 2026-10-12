@@ -12,6 +12,14 @@ void KeyboardRouter::handleMessage(std::string_view json) {
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (!parsed) {
+        // The channel's other phone -> desktop message: characters from the
+        // on-screen keyboard. Typed as they come; nothing is held, so there
+        // is nothing to track.
+        if (const auto text = parseTextMessage(json)) {
+            injector_->text(text->text);
+            ++stats_.textApplied;
+            return;
+        }
         ++stats_.invalidDropped;
         return;
     }

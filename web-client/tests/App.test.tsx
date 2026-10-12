@@ -81,6 +81,29 @@ describe('routing', () => {
     await waitFor(() => expect(screen.getByText(/Three steps, then never again/)).toBeInTheDocument())
   })
 
+  it('offers both ways in from the landing page nav', async () => {
+    const user = userEvent.setup()
+    renderApp('/landing')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Get started' })).toBeInTheDocument())
+
+    // Closed until asked: the choice is the button's whole job.
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Get started' }))
+    expect(screen.getByRole('menuitem', { name: /Set up this computer/ })).toBeInTheDocument()
+
+    // Escape and an outside click both close it without choosing.
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Get started' }))
+    await user.click(screen.getByText(/Three steps, then never again/))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+
+    // The phone side goes to the code entry.
+    await user.click(screen.getByRole('button', { name: 'Get started' }))
+    await user.click(screen.getByRole('menuitem', { name: /Connect to a computer/ }))
+    await waitFor(() => expect(screen.getByText('Enter the code')).toBeInTheDocument())
+  })
+
   it('opens the install guide from the empty device list', async () => {
     const user = userEvent.setup()
     renderApp('/welcome')

@@ -60,6 +60,7 @@ public:
     }
 
     bool key(std::string_view, bool, bool) override { return true; }
+    void text(std::u16string_view) override {}
 
     size_t count(Event::Kind kind) const {
         size_t total = 0;

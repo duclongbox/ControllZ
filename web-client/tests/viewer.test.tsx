@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -66,6 +66,7 @@ function renderViewer(overrides: Partial<SessionState> = {}) {
   })
   const sendPointer = vi.spyOn(client, 'sendPointer')
   const sendKey = vi.spyOn(client, 'sendKey')
+  const sendText = vi.spyOn(client, 'sendText')
   const router = createMemoryRouter([{ path: '/session/:deviceId', element: <Viewer /> }], {
     initialEntries: [`/session/${device.id}`],
   })
@@ -76,13 +77,40 @@ function renderViewer(overrides: Partial<SessionState> = {}) {
   )
   const stage = view.container.querySelector('video, [class*="frame"]')!.parentElement!
     .closest('[class*="stage"]') as HTMLElement
-  return { ...view, client, sendPointer, sendKey, stage }
+  return { ...view, client, sendPointer, sendKey, sendText, stage }
 }
 
 /** A mouse hovering the middle of the stage: always a `move` for the desktop. */
 function hoverStage(stage: HTMLElement) {
   fireEvent.pointerMove(stage, { pointerType: 'mouse', clientX: 400, clientY: 300, buttons: 0 })
 }
+
+/** jsdom has no matchMedia; a phone answers `(pointer: coarse)` with yes. */
+function setCoarsePointer() {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: (query: string) => ({
+      matches: query.includes('coarse'),
+      addEventListener() {},
+      removeEventListener() {},
+    }),
+  })
+}
+
+/** The soft keyboard's textarea, after the Keyboard button has been tapped. */
+async function openSoftKeyboard() {
+  await userEvent.click(screen.getByRole('button', { name: 'Keyboard' }))
+  return screen.getByRole('textbox', { name: 'Type on the computer' }) as HTMLTextAreaElement
+}
+
+/** What the OS keyboard does to the textarea: a new value, caret after it. */
+function typeInto(composer: HTMLTextAreaElement, value: string, caret = value.length) {
+  composer.value = value
+  composer.setSelectionRange(caret, caret)
+  fireEvent.input(composer)
+}
+
+const PADDING = '    '
 
 function setFullscreenElement(element: Element | null) {
   Object.defineProperty(document, 'fullscreenElement', { value: element, configurable: true })
@@ -100,6 +128,8 @@ beforeEach(() => {
 
 afterEach(() => {
   setFullscreenElement(null)
+  // Back to jsdom's default, which has no matchMedia at all.
+  delete (window as { matchMedia?: unknown }).matchMedia
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -173,5 +203,87 @@ describe('Viewer fullscreen', () => {
     setFullscreenElement(null)
     fireEvent.keyDown(window, { code: 'Escape', key: 'Escape' })
     expect(sendKey).toHaveBeenCalledWith(expect.objectContaining({ kind: 'down', code: 'Escape' }))
+  })
+})
+
+describe('Viewer soft keyboard', () => {
+  it('on a phone, Keyboard focuses the composer and what it types is sent as text', async () => {
+    setCoarsePointer()
+    const { sendText, sendKey } = renderViewer()
+    const composer = await openSoftKeyboard()
+    expect(document.activeElement).toBe(composer)
+    expect(composer.value).toBe(PADDING + PADDING)
+
+    typeInto(composer, PADDING + 'hi' + PADDING, PADDING.length + 2)
+    expect(sendText).toHaveBeenCalledWith('hi')
+    expect(sendKey).not.toHaveBeenCalled()
+
+    // Backspace: the keyboard removed a letter, so the desktop gets one.
+    typeInto(composer, PADDING + 'h' + PADDING, PADDING.length + 1)
+    expect(sendKey).toHaveBeenCalledWith({ kind: 'down', code: 'Backspace', repeat: false })
+    expect(sendKey).toHaveBeenCalledWith({ kind: 'up', code: 'Backspace', repeat: false })
+    expect(sendText).toHaveBeenCalledTimes(1)
+  })
+
+  it('on a desktop there is no composer, and keys still go by position', async () => {
+    const { sendKey, sendText } = renderViewer()
+    await userEvent.click(screen.getByRole('button', { name: 'Keyboard' }))
+    expect(screen.queryByRole('textbox')).toBeNull()
+
+    fireEvent.keyDown(window, { key: 'a', code: 'KeyA' })
+    expect(sendKey).toHaveBeenCalledWith(expect.objectContaining({ kind: 'down', code: 'KeyA' }))
+    expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('leaves characters to the textarea but forwards what it cannot type', async () => {
+    setCoarsePointer()
+    const { sendKey } = renderViewer()
+    const composer = await openSoftKeyboard()
+    typeInto(composer, PADDING + 'a' + PADDING, PADDING.length + 1)
+
+    // A letter from a hardware keyboard on a tablet: the textarea's, not a
+    // position — otherwise it would be typed twice.
+    fireEvent.keyDown(composer, { key: 'b', code: 'KeyB' })
+    expect(sendKey).not.toHaveBeenCalled()
+
+    // An arrow is forwarded, and the typed context is forgotten with it.
+    fireEvent.keyDown(composer, { key: 'ArrowLeft', code: 'ArrowLeft' })
+    expect(sendKey).toHaveBeenCalledWith(expect.objectContaining({ kind: 'down', code: 'ArrowLeft' }))
+    expect(composer.value).toBe(PADDING + PADDING)
+  })
+
+  it('a bar key keeps the keyboard up and resets the typed context', async () => {
+    setCoarsePointer()
+    const { sendKey } = renderViewer()
+    const composer = await openSoftKeyboard()
+    typeInto(composer, PADDING + 'abc' + PADDING, PADDING.length + 3)
+
+    const esc = screen.getByRole('button', { name: 'esc' })
+    const down = createEvent.pointerDown(esc)
+    fireEvent(esc, down)
+    expect(down.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(composer)
+
+    await userEvent.click(esc)
+    expect(sendKey).toHaveBeenCalledWith(expect.objectContaining({ kind: 'down', code: 'Escape' }))
+    expect(composer.value).toBe(PADDING + PADDING)
+  })
+
+  it('a touch on the stage does not take focus from the composer', async () => {
+    setCoarsePointer()
+    const { stage } = renderViewer()
+    const composer = await openSoftKeyboard()
+    const down = createEvent.pointerDown(stage, { pointerType: 'touch', clientX: 400, clientY: 300 })
+    fireEvent(stage, down)
+    expect(down.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(composer)
+  })
+
+  it('closes the overlay when the OS keyboard is dismissed', async () => {
+    setCoarsePointer()
+    renderViewer()
+    const composer = await openSoftKeyboard()
+    act(() => composer.blur())
+    await waitFor(() => expect(screen.queryByRole('textbox')).toBeNull())
   })
 })

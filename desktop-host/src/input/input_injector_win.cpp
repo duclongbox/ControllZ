@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <cmath>
+#include <vector>
 
 #include "desktophost/input/key_codes.h"
 #include "desktophost/input/pointer_mapping.h"
@@ -175,6 +176,27 @@ public:
         // "handled" from the router's point of view.
         SendInput(1, &input, sizeof(INPUT));
         return true;
+    }
+
+    void text(std::u16string_view utf16) override {
+        // KEYEVENTF_UNICODE types one UTF-16 unit per press, straight past
+        // the layout. A surrogate pair goes as two consecutive presses, which
+        // is how Windows expects an astral character to arrive. One SendInput
+        // call for the run, so no other input lands in the middle of a word.
+        std::vector<INPUT> inputs;
+        inputs.reserve(utf16.size() * 2);
+        for (const char16_t unit : utf16) {
+            for (const bool down : {true, false}) {
+                INPUT input{};
+                input.type = INPUT_KEYBOARD;
+                input.ki.wScan = unit;
+                input.ki.dwFlags = KEYEVENTF_UNICODE | (down ? 0 : KEYEVENTF_KEYUP);
+                inputs.push_back(input);
+            }
+        }
+        if (!inputs.empty()) {
+            SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
+        }
     }
 
 private:

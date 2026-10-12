@@ -54,6 +54,14 @@ export interface SessionClient {
    */
   sendKey(intent: KeyIntent): void
 
+  /**
+   * A run of characters from the on-screen keyboard — the one thing that is
+   * sent as characters, because a soft keyboard has no positions. Same
+   * channel as the keys, so it stays in order with the Backspaces and Enters
+   * around it. At most MAX_TEXT_LENGTH per call; the composer splits.
+   */
+  sendText(text: string): void
+
   /** M5: network changed under us; restart ICE without tearing down the stage. */
   restartIce(): void
 
