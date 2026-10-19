@@ -5,13 +5,18 @@
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "desktophost/capture/capture_size.h"
 #include "desktophost/capture/screen_capturer.h"
 
+using desktophost::AudioCallback;
+using desktophost::AudioChunk;
 using desktophost::CaptureConfig;
 using desktophost::CaptureErrorCallback;
 using desktophost::FrameCallback;
@@ -27,6 +32,8 @@ constexpr int64_t kTimeoutSeconds = 10;
 /// the address matters.
 char kCaptureQueueKeyStorage;
 void* const kCaptureQueueKey = &kCaptureQueueKeyStorage;
+char kAudioQueueKeyStorage;
+void* const kAudioQueueKey = &kAudioQueueKeyStorage;
 
 /// Shared between the C++ capturer and the Objective-C stream delegate. The
 /// delegate outlives stop() from ScreenCaptureKit's point of view, so the
@@ -36,6 +43,7 @@ struct CaptureSink {
     bool running = false;
     FrameCallback onFrame;
     CaptureErrorCallback onError;
+    AudioCallback onAudio;
 };
 
 std::string describe(NSError* error) {
@@ -72,8 +80,14 @@ std::string describe(NSError* error) {
     didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                    ofType:(SCStreamOutputType)type {
     (void)stream;
-    if (type != SCStreamOutputTypeScreen || sampleBuffer == nullptr ||
-        !CMSampleBufferIsValid(sampleBuffer)) {
+    if (sampleBuffer == nullptr || !CMSampleBufferIsValid(sampleBuffer)) {
+        return;
+    }
+    if (type == SCStreamOutputTypeAudio) {
+        [self deliverAudio:sampleBuffer];
+        return;
+    }
+    if (type != SCStreamOutputTypeScreen) {
         return;
     }
 
@@ -126,6 +140,85 @@ std::string describe(NSError* error) {
     callback(std::move(frame));
 }
 
+/// System audio from the same stream as the frames. ScreenCaptureKit hands it
+/// over as Float32 PCM at the rate and channel count the configuration asked
+/// for, normally one buffer per channel (non-interleaved); the chunk type is
+/// interleaved, which is what Opus takes, so the planes are zipped here.
+- (void)deliverAudio:(CMSampleBufferRef)sampleBuffer {
+    AudioCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(_sink->mutex);
+        if (!_sink->running) {
+            return;
+        }
+        callback = _sink->onAudio;
+    }
+    if (!callback) {
+        return;
+    }
+
+    CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sampleBuffer);
+    const AudioStreamBasicDescription* asbd =
+        format != nullptr ? CMAudioFormatDescriptionGetStreamBasicDescription(format) : nullptr;
+    if (asbd == nullptr || asbd->mFormatID != kAudioFormatLinearPCM ||
+        (asbd->mFormatFlags & kAudioFormatFlagIsFloat) == 0 || asbd->mBitsPerChannel != 32) {
+        // Not what was asked for. Dropping is better than guessing: a wrong
+        // guess is loud noise on the phone.
+        return;
+    }
+    const bool planar = (asbd->mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0;
+    const int channels = static_cast<int>(asbd->mChannelsPerFrame);
+    const CMItemCount frames = CMSampleBufferGetNumSamples(sampleBuffer);
+    if (channels <= 0 || frames <= 0) {
+        return;
+    }
+
+    // The buffer list sizes itself to the channel count; ask first.
+    size_t listSize = 0;
+    OSStatus status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        sampleBuffer, &listSize, nullptr, 0, kCFAllocatorDefault, kCFAllocatorDefault,
+        kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, nullptr);
+    if (status != noErr || listSize == 0) {
+        return;
+    }
+    std::vector<std::byte> storage(listSize);
+    auto* list = reinterpret_cast<AudioBufferList*>(storage.data());
+    CMBlockBufferRef block = nullptr;
+    status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+        sampleBuffer, nullptr, list, listSize, kCFAllocatorDefault, kCFAllocatorDefault,
+        kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, &block);
+    if (status != noErr || block == nullptr) {
+        return;
+    }
+
+    AudioChunk chunk;
+    chunk.sampleRate = static_cast<int>(asbd->mSampleRate);
+    chunk.channels = channels;
+    const CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+    chunk.ptsUs = CMTimeConvertScale(pts, 1'000'000, kCMTimeRoundingMethod_Default).value;
+    chunk.samples.resize(static_cast<size_t>(frames) * static_cast<size_t>(channels));
+
+    if (planar) {
+        const UInt32 planes = std::min<UInt32>(list->mNumberBuffers, static_cast<UInt32>(channels));
+        for (UInt32 c = 0; c < planes; ++c) {
+            const auto* plane = static_cast<const float*>(list->mBuffers[c].mData);
+            const size_t available = list->mBuffers[c].mDataByteSize / sizeof(float);
+            const size_t count = std::min(static_cast<size_t>(frames), available);
+            for (size_t i = 0; i < count; ++i) {
+                chunk.samples[i * static_cast<size_t>(channels) + c] = plane[i];
+            }
+        }
+    } else if (list->mNumberBuffers >= 1) {
+        const auto* data = static_cast<const float*>(list->mBuffers[0].mData);
+        const size_t available = list->mBuffers[0].mDataByteSize / sizeof(float);
+        const size_t count = std::min(chunk.samples.size(), available);
+        std::copy(data, data + count, chunk.samples.begin());
+    }
+    CFRelease(block);
+
+    callback(std::move(chunk));
+}
+
 - (void)stream:(SCStream*)stream didStopWithError:(NSError*)error {
     (void)stream;
     CaptureErrorCallback callback;
@@ -157,11 +250,13 @@ public:
 
     ~MacScreenCapturer() override { stop(); }
 
-    Status start(FrameCallback onFrame, CaptureErrorCallback onError) override {
+    Status start(FrameCallback onFrame, CaptureErrorCallback onError,
+                 AudioCallback onAudio = nullptr) override {
         @autoreleasepool {
             if (stream_ != nil) {
                 return Status::error("capture already started");
             }
+            const bool wantAudio = config_.captureAudio && onAudio != nullptr;
 
             SCDisplay* display = nil;
             Status contentStatus = findDisplay(&display);
@@ -188,10 +283,24 @@ public:
             streamConfig.showsCursor = config_.showsCursor;
             streamConfig.queueDepth = 6;
 
+            if (wantAudio) {
+                // Same stream, second output: ScreenCaptureKit taps the
+                // system mixer for the whole display's audio, under the
+                // Screen Recording grant the frames already needed. 48 kHz
+                // stereo float is what Opus wants, so nothing resamples.
+                streamConfig.capturesAudio = YES;
+                streamConfig.sampleRate = 48'000;
+                streamConfig.channelCount = 2;
+                // Our own process makes no sound, but if it ever did (a
+                // notification, say) the phone would hear it twice.
+                streamConfig.excludesCurrentProcessAudio = YES;
+            }
+
             {
                 std::lock_guard<std::mutex> lock(sink_->mutex);
                 sink_->onFrame = std::move(onFrame);
                 sink_->onError = std::move(onError);
+                sink_->onAudio = wantAudio ? std::move(onAudio) : nullptr;
                 sink_->running = true;
             }
 
@@ -215,6 +324,24 @@ public:
                                     error:&addError]) {
                 reset();
                 return Status::error("addStreamOutput failed: " + describe(addError));
+            }
+
+            if (wantAudio) {
+                // Its own serial queue: audio arrives every ~10 ms and must not
+                // queue behind a frame handler, which is where the encoder's
+                // submit call lives.
+                audioQueue_ = dispatch_queue_create(
+                    "com.remotehost.desktop-host.capture.audio",
+                    dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,
+                                                            QOS_CLASS_USER_INTERACTIVE, 0));
+                dispatch_queue_set_specific(audioQueue_, kAudioQueueKey, kAudioQueueKey, nullptr);
+                if (![stream_ addStreamOutput:output_
+                                         type:SCStreamOutputTypeAudio
+                           sampleHandlerQueue:audioQueue_
+                                        error:&addError]) {
+                    reset();
+                    return Status::error("addStreamOutput(audio) failed: " + describe(addError));
+                }
             }
 
             // Blocking here is the point: if Screen Recording is denied the
@@ -268,6 +395,9 @@ public:
             // deadlock.
             if (queue_ != nil && dispatch_get_specific(kCaptureQueueKey) == nullptr) {
                 dispatch_sync(queue_, ^{});
+            }
+            if (audioQueue_ != nil && dispatch_get_specific(kAudioQueueKey) == nullptr) {
+                dispatch_sync(audioQueue_, ^{});
             }
             reset();
         }
@@ -327,6 +457,7 @@ private:
         stream_ = nil;
         output_ = nil;
         queue_ = nil;
+        audioQueue_ = nil;
     }
 
     CaptureConfig config_;
@@ -334,6 +465,7 @@ private:
     SCStream* stream_ = nil;
     DHStreamOutput* output_ = nil;
     dispatch_queue_t queue_ = nil;
+    dispatch_queue_t audioQueue_ = nil;
     int width_ = 0;
     int height_ = 0;
 };

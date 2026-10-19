@@ -24,8 +24,14 @@ CLAUDE.md. Breaking one is a bug, not a style disagreement.
    would hide a menu bar or a dock, which on a remote desktop is a
    correctness failure, not a cosmetic one.
 2. **Chrome never occupies layout.** Both viewer bars are overlays on a
-   gradient scrim, auto-hidden after 3 s without touch. Chrome appearing
-   or disappearing must never resize, reflow or letterbox the video.
+   gradient scrim. With a mouse they auto-hide after 3 s and come back when
+   it rests on the top edge; on a touch device they stay down until the
+   menu button (always up, in a corner) raises them, and the stage is
+   paused while they are up. A touch must never raise them: the bars sit
+   over the top and bottom strips of the picture, which is where the remote
+   menu bar, Dock and taskbar are, and a bar woken by every touch made
+   those unreachable from a finger. Chrome appearing or disappearing must
+   never resize, reflow or letterbox the video.
 3. **Safe-area insets pad overlays only.** `env(safe-area-inset-*)` is
    applied to the chrome containers. It never touches the stage — a notch
    must not move the video, because the video is not in the flow.
@@ -65,12 +71,13 @@ CLAUDE.md. Breaking one is a bug, not a style disagreement.
 | `DeviceDetail` | `/device/:id` | M3 | — | local record + live presence |
 | `Connecting` | `/session/:id` | M1 | `connectRequest` | `sessionStarted`, `sdpOffer`, `iceCandidate` |
 | `Main` (viewer) | `/session/:id` | M1 | `sdpAnswer`, `iceCandidate` | RTP video track; chrome visible |
-| `ViewerIdle` | `/session/:id` | M1 | — | chrome auto-hidden after 3 s |
+| `ViewerIdle` | `/session/:id` | M1 | — | chrome auto-hidden after 3 s (mouse); on a touch device the bars are down from the start |
+| `ViewerMenu` | `/session/:id` | M2 | — | menu button in the top-right corner (in a black bar when the picture leaves one) toggles menu mode: both bars up, the stage dimmed and paused, a tap on the stage closes it and is not forwarded; choosing an action closes it — **built** |
 | `ViewerStats` | `/session/:id` | M1 | — | `RTCPeerConnection.getStats()` at 1 Hz |
 | `ViewerInputTrackpad` | `/session/:id` | M2 | `pointerMove/Down/Up`, `scroll` | unordered DataChannel, coalesced per rAF (scroll deltas summed) — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown/keyUp` | own ordered, reliable `keys` DataChannel; physical codes — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown`, `keyUp` | physical `code` + modifier state |
-| `ViewerSoftKeyboard` | `/session/:id` | M2 | `text`, `keyDown/keyUp` | phone only (`pointer: coarse`): Keyboard focuses a hidden textarea, the OS keyboard types into it, each change is diffed into `text` runs and Backspace/Delete/Enter/Tab presses on the `keys` channel; modifier chords with soft-keyboard text deferred — **built** |
+| `ViewerSoftKeyboard` | `/session/:id` | M2 | `text`, `keyDown/keyUp` | phone only (`pointer: coarse`): Keyboard focuses a hidden textarea, the OS keyboard types into it, each change is diffed into `text` runs and Backspace/Delete/Enter/Tab presses on the `keys` channel; nothing of ours over the keyboard, which its own hide key dismisses (the modifier bar and arrows are deferred on phones, to come back as a menu option); modifier chords with soft-keyboard text deferred — **built** |
 | `ViewerMonitors` | `/session/:id` | M2 | `setDisplay` | renegotiates, forces an IDR |
 | `ViewerQuality` | `/session/:id` | M4 | `setQualityPriority` | ladder position echoed back |
 | `ViewerRelayed` | `/session/:id` | M4 | — | candidate pair type `=== "relay"` |
@@ -308,7 +315,7 @@ None of it is sent anywhere: `store/` is this device's own memory.
 | `remotehost.deviceId` | `session/wsClient.ts` | this phone's id, from `registered` |
 | `remotehost.credential` | `session/wsClient.ts` | bearer secret for reconnecting |
 | `remotehost.devices` | `store/devices.ts` | paired computers and the names given to them |
-| `remotehost.prefs` | `store/prefs.ts` | wake lock, stats overlay, haptics, chrome delay, pointer mode |
+| `remotehost.prefs` | `store/prefs.ts` | wake lock, stats overlay, haptics, sound, chrome delay, pointer mode, quality priority, shortcut modifiers |
 | `remotehost.installDismissed` | `app/AppShell.tsx` | the install sheet was answered once |
 
 Two rules hold for all of them. Every read is wrapped — private mode throws

@@ -207,6 +207,41 @@ Constraints to lock in at implementation time:
 - Re-verify Safari's current WebRTC codec matrix when M1 starts (per the
   doc's own note) — a 10-minute check, not a design risk.
 
+### 2.1a System audio — **Opus track, same bundle, same CNAME and msid**
+The desktop's sound (what a game or video is playing, not the microphone)
+travels as a second send-only RTP track next to the video, negotiated in
+the same offer. Decisions locked in at implementation time:
+
+- **Capture.** macOS: a second output (`SCStreamOutputTypeAudio`) on the
+  same ScreenCaptureKit stream as the frames, under the Screen Recording
+  grant the frames already needed; 48 kHz stereo float asked for directly.
+  Windows: WASAPI loopback on the default render endpoint with
+  `AUTOCONVERTPCM`, so the mixer delivers 48 kHz stereo float whatever the
+  device's own format is. Both are behind `IScreenCapturer::start()`'s
+  audio callback; main.cpp does not know which it got.
+- **Encode.** libopus on the CPU, portable, one backend everywhere
+  (`OPUS_APPLICATION_AUDIO`, 128 kb/s, 20 ms frames, complexity 7, DTX on,
+  no in-band FEC). Media Foundation has no Opus encoder, so a per-platform
+  design would have meant two encoders for no gain; a 20 ms stereo frame
+  encodes in well under a millisecond. The GPU-resident rule is about the
+  pixel path and does not apply.
+- **Transport.** `m=audio` after `m=video`, Opus payload type 111,
+  `stereo=1;sprop-stereo=1;usedtx=1`, 48 kHz RTP clock (RFC 7587). Both
+  tracks share one CNAME and sender reports from the same wall clock, which
+  is what the browser's lip-sync uses; both carry the same `msid`, so the
+  phone receives ONE MediaStream with both tracks rather than two streams
+  racing to be the one the video element plays. No NACK responder on audio:
+  a resent 20 ms of sound lands after the jitter buffer has played past it.
+- **Playback.** The phone's video element starts muted (iOS refuses unmuted
+  autoplay) and is unmuted once the stream is attached. If the browser
+  refuses, a "Tap for sound" prompt appears and the next tap — on it or on
+  the stage — unmutes from inside the gesture. Sound is a phone preference;
+  the desktop keeps sending either way (`--no-audio` turns it off at the
+  host).
+- **Deferred.** Microphone (phone → desktop), per-application capture,
+  audio in the stats overlay, adaptive audio bitrate, measured A/V offset
+  (verified by ear only in this milestone), Linux.
+
 ### 2.2 TURN: managed provider (§2.2) — **agree; defer choice to M4**
 At ~100 sessions/day with a typical 10–20 % relay rate, TURN traffic is a
 few sessions/day — single-digit dollars/month at any managed provider's

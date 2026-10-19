@@ -19,6 +19,27 @@ namespace {
 /// H.264 RTP always runs on a 90 kHz clock (RFC 6184).
 constexpr uint32_t kClockRate = 90'000;
 
+/// Opus RTP always runs at 48 kHz regardless of the encoder's input rate
+/// (RFC 7587).
+constexpr uint32_t kAudioClockRate = 48'000;
+
+/// One CNAME for both tracks. The receiver synchronises tracks that share a
+/// CNAME using their sender reports; two different names would be two
+/// unrelated clocks and no lip-sync.
+constexpr const char* kCname = "desktop-host";
+
+/// `rtpConfig->timestamp` for a frame captured at `ptsUs`, relative to the
+/// first frame's capture time on this track. Carrying capture spacing rather
+/// than send spacing is what lets the receiver's jitter buffer reproduce the
+/// original timing.
+uint32_t rtpTimestamp(const rtc::RtpPacketizationConfig& rtpConfig, int64_t ptsUs,
+                      int64_t baseUs, uint32_t clockRate) {
+    const int64_t deltaUs = ptsUs - baseUs;
+    const auto offset =
+        static_cast<uint32_t>((deltaUs * static_cast<int64_t>(clockRate)) / 1'000'000);
+    return rtpConfig.startTimestamp + offset;
+}
+
 PeerState toPeerState(rtc::PeerConnection::State state) {
     switch (state) {
         case rtc::PeerConnection::State::New:
@@ -82,13 +103,17 @@ public:
                 }
             });
 
+            const uint32_t videoSsrc = randomSsrc();
             rtc::Description::Video media("video", rtc::Description::Direction::SendOnly);
             media.addH264Codec(config_.payloadType, config_.h264Profile);
             media.setBitrate(config_.bitrateKbps);
+            // Declaring the SSRC with an msid is what lets the browser group
+            // this track with the audio one into a single MediaStream.
+            media.addSSRC(videoSsrc, kCname, config_.mediaStreamId, "desktop-video");
 
             auto track = pc_->addTrack(media);
             auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
-                randomSsrc(), "desktop-host", static_cast<uint8_t>(config_.payloadType), kClockRate);
+                videoSsrc, kCname, static_cast<uint8_t>(config_.payloadType), kClockRate);
 
             // LongStartSequence: the encoder emits Annex-B with 4-byte start
             // codes, so the packetizer splits on exactly what annex_b.cpp
@@ -115,6 +140,10 @@ public:
                 rtpConfig_ = rtpConfig;
             }
 
+            if (config_.enableAudio) {
+                openAudioTrack();
+            }
+
             if (config_.enableInputChannel) {
                 openInputChannel();
                 openKeyChannel();
@@ -128,6 +157,38 @@ public:
         }
 
         return Status::ok();
+    }
+
+    /// The audio track. Added before setLocalDescription() like everything
+    /// else that needs an m-line. Stereo is asked for explicitly: the
+    /// browser's default Opus answer is mono unless the offer says otherwise,
+    /// and a game's soundstage folded to mono is the first thing a listener
+    /// notices. DTX is announced so the receiver expects the gaps.
+    void openAudioTrack() {
+        const uint32_t audioSsrc = randomSsrc();
+        rtc::Description::Audio audio("audio", rtc::Description::Direction::SendOnly);
+        audio.addOpusCodec(config_.audioPayloadType,
+                           "minptime=10;maxaveragebitrate=" +
+                               std::to_string(config_.audioBitrateKbps * 1000) +
+                               ";stereo=1;sprop-stereo=1;useinbandfec=0;usedtx=1");
+        audio.setBitrate(config_.audioBitrateKbps);
+        audio.addSSRC(audioSsrc, kCname, config_.mediaStreamId, "desktop-audio");
+
+        auto track = pc_->addTrack(audio);
+        auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
+            audioSsrc, kCname, static_cast<uint8_t>(config_.audioPayloadType), kAudioClockRate);
+
+        // One Opus packet is one RTP packet; the generic audio packetizer is
+        // exactly that. Sender reports and nothing else: a NACK responder
+        // would resend 20 ms of audio that the jitter buffer has already
+        // played past.
+        auto packetizer = std::make_shared<rtc::OpusRtpPacketizer>(rtpConfig);
+        packetizer->addToChain(std::make_shared<rtc::RtcpSrReporter>(rtpConfig));
+        track->setMediaHandler(packetizer);
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        audioTrack_ = std::move(track);
+        audioRtpConfig_ = std::move(rtpConfig);
     }
 
     /// THE INVARIANT (CLAUDE.md): input travels unordered and unreliable, on
@@ -246,16 +307,10 @@ public:
             return;
         }
 
-        // Timestamps are relative to the first frame sent, on the 90 kHz RTP
-        // clock. Carrying capture spacing rather than send spacing is what
-        // lets the receiver's jitter buffer reproduce the original timing.
         if (!baseUs_.has_value()) {
             baseUs_ = frame.ptsUs;
         }
-        const int64_t deltaUs = frame.ptsUs - *baseUs_;
-        const auto offset = static_cast<uint32_t>((deltaUs * static_cast<int64_t>(kClockRate)) /
-                                                  1'000'000);
-        rtpConfig->timestamp = rtpConfig->startTimestamp + offset;
+        rtpConfig->timestamp = rtpTimestamp(*rtpConfig, frame.ptsUs, *baseUs_, kClockRate);
 
         try {
             track->send(frame.annexB.data(), frame.annexB.size());
@@ -264,8 +319,40 @@ public:
         }
     }
 
+    void sendAudio(const EncodedAudioFrame& frame) override {
+        std::shared_ptr<rtc::Track> track;
+        std::shared_ptr<rtc::RtpPacketizationConfig> rtpConfig;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            track = audioTrack_;
+            rtpConfig = audioRtpConfig_;
+        }
+        if (track == nullptr || rtpConfig == nullptr || frame.data.empty()) {
+            return;
+        }
+        if (!track->isOpen()) {
+            return;
+        }
+
+        // Its own base, not the video's: the two tracks are lined up by the
+        // receiver from their sender reports (same CNAME, same wall clock),
+        // not by sharing an origin here.
+        if (!audioBaseUs_.has_value()) {
+            audioBaseUs_ = frame.ptsUs;
+        }
+        rtpConfig->timestamp =
+            rtpTimestamp(*rtpConfig, frame.ptsUs, *audioBaseUs_, kAudioClockRate);
+
+        try {
+            track->send(frame.data.data(), frame.data.size());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "[transport] audio send failed: %s\n", e.what());
+        }
+    }
+
     void close() override {
         std::shared_ptr<rtc::Track> track;
+        std::shared_ptr<rtc::Track> audioTrack;
         std::shared_ptr<rtc::DataChannel> input;
         std::shared_ptr<rtc::DataChannel> keys;
         {
@@ -273,6 +360,9 @@ public:
             track = std::move(track_);
             track_.reset();
             rtpConfig_.reset();
+            audioTrack = std::move(audioTrack_);
+            audioTrack_.reset();
+            audioRtpConfig_.reset();
             input = std::move(inputChannel_);
             inputChannel_.reset();
             keys = std::move(keyChannel_);
@@ -292,9 +382,12 @@ public:
             } catch (const std::exception&) {
             }
         }
-        if (track != nullptr) {
+        for (const auto& media : {track, audioTrack}) {
+            if (media == nullptr) {
+                continue;
+            }
             try {
-                track->close();
+                media->close();
             } catch (const std::exception&) {
                 // Already gone; nothing useful to do during teardown.
             }
@@ -318,11 +411,15 @@ private:
     std::mutex mutex_;
     std::shared_ptr<rtc::Track> track_;
     std::shared_ptr<rtc::RtpPacketizationConfig> rtpConfig_;
+    std::shared_ptr<rtc::Track> audioTrack_;
+    std::shared_ptr<rtc::RtpPacketizationConfig> audioRtpConfig_;
     std::shared_ptr<rtc::DataChannel> inputChannel_;
     std::shared_ptr<rtc::DataChannel> keyChannel_;
 
-    // Only the sending thread reads or writes this.
+    // Each only ever touched by its own sending thread: the video encoder's
+    // callback thread for one, the audio capture thread for the other.
     std::optional<int64_t> baseUs_;
+    std::optional<int64_t> audioBaseUs_;
 };
 
 }  // namespace

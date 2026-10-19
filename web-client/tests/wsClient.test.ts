@@ -85,6 +85,34 @@ class FakeDataChannel {
   }
 }
 
+/* jsdom has no MediaStream. The client only reads and extends a stream's
+ * track set, so a fake with those two methods is the whole surface. */
+function fakeTrack(kind: 'video' | 'audio'): MediaStreamTrack {
+  return { kind, id: `${kind}-track` } as unknown as MediaStreamTrack
+}
+
+class FakeMediaStream {
+  id: string
+  tracks: MediaStreamTrack[]
+
+  constructor(tracks: MediaStreamTrack[] = [], id = 'remote') {
+    this.id = id
+    this.tracks = [...tracks]
+  }
+
+  getTracks() {
+    return [...this.tracks]
+  }
+
+  addTrack(track: MediaStreamTrack) {
+    this.tracks.push(track)
+  }
+}
+
+function fakeStream(tracks: MediaStreamTrack[] = [], id = 'remote'): MediaStream {
+  return new FakeMediaStream(tracks, id) as unknown as MediaStream
+}
+
 class FakePeerConnection {
   static current: FakePeerConnection | null = null
 
@@ -154,8 +182,10 @@ class FakePeerConnection {
   restartIce() {}
 
   // -- test controls --
-  emitTrack(stream: MediaStream) {
-    this.ontrack?.({ streams: [stream], track: {} as MediaStreamTrack })
+  /// `streams` as the browser fills it: the MediaStream the track's msid
+  /// named, or nothing when the offer carried no msid.
+  emitTrack(stream: MediaStream | null, track: MediaStreamTrack = fakeTrack('video')) {
+    this.ontrack?.({ streams: stream ? [stream] : [], track })
   }
 
   transitionTo(next: RTCPeerConnectionState) {
@@ -316,14 +346,67 @@ describe('wsClient session', () => {
 
     // The point of the whole exercise: a track arrives and reaches the state
     // the viewer renders from.
-    const stream = { id: 'remote' } as unknown as MediaStream
-    peer.emitTrack(stream)
+    const video = fakeTrack('video')
+    const stream = fakeStream([video])
+    peer.emitTrack(stream, video)
     expect(client.getState().stream).toBe(stream)
 
     peer.transitionTo('connected')
     expect(client.getState().phase).toBe('streaming')
     expect(client.getState().startedAt).not.toBeNull()
     client.dispose()
+  })
+
+  /* Video and audio come as two ontrack events. The desktop tags both with
+   * one msid, so the browser delivers the same MediaStream twice; the state
+   * must keep holding that one stream, with both tracks in it, rather than
+   * be replaced per event — the video element is already playing it. */
+  it('keeps one stream when the audio track arrives after the video', async () => {
+    const client = await connected()
+    socket().deliver({ type: 'sessionStarted', sessionId: SESSION_ID, peerDeviceId: DESKTOP_ID })
+    await vi.waitFor(() => expect(FakePeerConnection.current).not.toBeNull())
+    socket().deliver({ type: 'sdpOffer', sessionId: SESSION_ID, sdp: 'v=0 offer' })
+    await vi.waitFor(() => expect(socket().types).toContain('sdpAnswer'))
+    const peer = FakePeerConnection.current!
+
+    const video = fakeTrack('video')
+    const audio = fakeTrack('audio')
+    const stream = fakeStream([video])
+    peer.emitTrack(stream, video)
+    // The browser has already put the audio track in the stream by the time
+    // the second event fires; the client must not add it twice.
+    stream.addTrack(audio)
+    peer.emitTrack(stream, audio)
+
+    expect(client.getState().stream).toBe(stream)
+    expect(stream.getTracks()).toEqual([video, audio])
+    client.dispose()
+  })
+
+  /* An older desktop that sends no msid: the browser gives each track with
+   * no stream at all, and the phone gathers them into one of its own. */
+  it('gathers msid-less tracks into a single stream of its own', async () => {
+    vi.stubGlobal('MediaStream', FakeMediaStream)
+    try {
+      const client = await connected()
+      socket().deliver({ type: 'sessionStarted', sessionId: SESSION_ID, peerDeviceId: DESKTOP_ID })
+      await vi.waitFor(() => expect(FakePeerConnection.current).not.toBeNull())
+      socket().deliver({ type: 'sdpOffer', sessionId: SESSION_ID, sdp: 'v=0 offer' })
+      await vi.waitFor(() => expect(socket().types).toContain('sdpAnswer'))
+      const peer = FakePeerConnection.current!
+
+      const video = fakeTrack('video')
+      const audio = fakeTrack('audio')
+      peer.emitTrack(null, video)
+      const first = client.getState().stream!
+      expect(first.getTracks()).toEqual([video])
+      peer.emitTrack(null, audio)
+      expect(client.getState().stream).toBe(first)
+      expect(first.getTracks()).toEqual([video, audio])
+      client.dispose()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   /* The bug this guards, seen on a home network with both devices on the same

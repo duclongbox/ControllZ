@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <condition_variable>
 #include <mutex>
 #include <map>
@@ -361,4 +362,74 @@ TEST_CASE("a line too short to carry an address is left alone", "[transport]") {
 
     REQUIRE(resolved.has_value());
     CHECK(*resolved == candidate);
+}
+
+// The audio track is the second half of the media contract. Everything the
+// phone needs to hear anything is in these lines: an audio m-line it can
+// answer, Opus at 48 kHz stereo, and an msid shared with the video so the
+// browser hands both tracks over as one MediaStream — without that the phone
+// sees two streams and plays whichever arrived last, which is a coin toss
+// between picture-without-sound and sound-without-picture.
+TEST_CASE("the offer advertises send-only stereo Opus grouped with the video", "[transport]") {
+    const std::string sdp = offerFor(offlineConfig());
+    INFO(sdp);
+
+    CHECK(sdp.find("m=audio") != std::string::npos);
+    CHECK(sdp.find("opus/48000/2") != std::string::npos);
+    CHECK(sdp.find("stereo=1") != std::string::npos);
+    CHECK(sdp.find("sprop-stereo=1") != std::string::npos);
+    CHECK(sdp.find("usedtx=1") != std::string::npos);
+    // Matches the encoder's default of 128 kb/s.
+    CHECK(sdp.find("maxaveragebitrate=128000") != std::string::npos);
+
+    // Both tracks carry the same msid.
+    const std::string msid = "a=msid:desktop ";
+    const std::size_t first = sdp.find(msid);
+    REQUIRE(first != std::string::npos);
+    CHECK(sdp.find(msid, first + 1) != std::string::npos);
+
+    // The video m-line comes first, so a phone built before audio existed —
+    // which took the first track it was given — still gets the picture.
+    CHECK(sdp.find("m=video") < sdp.find("m=audio"));
+}
+
+TEST_CASE("with audio disabled the offer carries no audio m-line at all", "[transport]") {
+    PeerConnectionConfig config = offlineConfig();
+    config.enableAudio = false;
+    const std::string sdp = offerFor(config);
+    INFO(sdp);
+    CHECK(sdp.find("m=audio") == std::string::npos);
+    CHECK(sdp.find("opus") == std::string::npos);
+    CHECK(sdp.find("m=video") != std::string::npos);
+}
+
+// Packets handed over before DTLS is up, or after audio was never offered,
+// are dropped rather than queued or crashed on. Live audio delivered late is
+// worse than a gap, and this is the path every session takes for the first
+// few hundred milliseconds.
+TEST_CASE("sendAudio before the track opens, or with audio off, is a safe no-op",
+          "[transport]") {
+    EncodedAudioFrame frame;
+    frame.data.assign(100, std::byte{0x5A});
+    frame.ptsUs = 20'000;
+
+    SECTION("audio offered, not yet connected") {
+        auto peer = makePeerConnection(offlineConfig());
+        PeerConnectionCallbacks callbacks;
+        REQUIRE(static_cast<bool>(peer->start(std::move(callbacks))));
+        peer->sendAudio(frame);
+        peer->sendAudio(frame);
+        peer->close();
+        peer->sendAudio(frame);
+    }
+    SECTION("audio not offered") {
+        PeerConnectionConfig config = offlineConfig();
+        config.enableAudio = false;
+        auto peer = makePeerConnection(config);
+        PeerConnectionCallbacks callbacks;
+        REQUIRE(static_cast<bool>(peer->start(std::move(callbacks))));
+        peer->sendAudio(frame);
+        peer->close();
+    }
+    SUCCEED("no crash, no hang");
 }

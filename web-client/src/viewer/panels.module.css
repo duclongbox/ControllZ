@@ -202,12 +202,6 @@
 
 .modifiers::-webkit-scrollbar { display: none; }
 
-/* Over the OS keyboard rather than above the bottom bar (which is under the
-   keyboard by then). `bottom` itself is set inline from the measured inset. */
-.modifiersLifted {
-  border-bottom: 0;
-}
-
 /* The textarea the phone keyboard types into. It must exist and be focused;
    it must not be seen. Not display:none or visibility:hidden — neither can
    take focus — and not off-screen, which iOS scrolls to. */

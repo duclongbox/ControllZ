@@ -51,6 +51,28 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+# ---------------------------------------------------------------------------
+# libopus — the audio encoder.
+#
+# One portable encoder rather than per-platform ones: AudioToolbox on macOS
+# can produce Opus, Media Foundation on Windows cannot, and a CPU encoder for
+# 48 kHz stereo costs well under a millisecond per 20 ms frame. Audio is CPU
+# data by nature, so the GPU-resident rule (CLAUDE.md) — which is about pixels
+# — is not in play here. Static, no programs or tests, pinned to a tag.
+# ---------------------------------------------------------------------------
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    opus
+    GIT_REPOSITORY https://github.com/xiph/opus.git
+    GIT_TAG v1.5.2
+    GIT_SHALLOW TRUE
+)
+
 FetchContent_MakeAvailable(libdatachannel)
 
 # libdatachannel declares option(BUILD_SHARED_LIBS ... ON), which lands in the
@@ -60,4 +82,4 @@ FetchContent_MakeAvailable(libdatachannel)
 # found) the moment catch_discover_tests runs it. A normal variable shadows
 # the cache entry for everything declared below.
 set(BUILD_SHARED_LIBS OFF)
-FetchContent_MakeAvailable(Catch2 nlohmann_json)
+FetchContent_MakeAvailable(Catch2 nlohmann_json opus)

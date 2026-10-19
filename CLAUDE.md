@@ -2,10 +2,11 @@
 
 ## What this is
 A P2P-first remote desktop control app. The phone (PWA/browser) receives a
-WebRTC video stream of the desktop screen and sends touch input back over a
-WebRTC DataChannel. The backend only brokers session setup (pairing,
-discovery, SDP/ICE exchange) — video and input never touch our servers once
-a session is established.
+WebRTC video stream of the desktop screen, plus the desktop's system audio
+as an Opus track, and sends touch input back over a WebRTC DataChannel. The
+backend only brokers session setup (pairing, discovery, SDP/ICE exchange) —
+video, audio and input never touch our servers once a session is
+established.
 
 Full system design: see /docs/system-design.md.
 
@@ -75,6 +76,13 @@ one is scoped deliberately to keep sessions reviewable. -->
   build a second path if a specific, measured problem shows up.
 - Screen capture stays GPU-resident end to end in desktop-host — no CPU
   readback (glReadPixels-equivalent) anywhere in the capture → encode path.
+  (Audio is CPU data by nature and this rule is about pixels: system audio is
+  captured as PCM and encoded with libopus on the CPU.)
+- System audio is its own send-only RTP track (Opus, 48 kHz stereo) in the
+  same bundle as the video, tagged with the same `msid` so the browser hands
+  the phone one MediaStream. Never carry audio over a DataChannel (ordering
+  and retransmits are the wrong model for it) and never interleave it with
+  the video track's RTP.
 - Pointer input (moves, clicks, scroll) travels over the *unordered,
   unreliable* `input` DataChannel. Keyboard travels over its own *ordered,
   reliable* `keys` DataChannel — physical key positions (`keyDown`/`keyUp`)

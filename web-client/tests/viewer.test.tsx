@@ -8,7 +8,7 @@ import { createMockClient } from '../src/session/mockClient'
 import { SessionProvider } from '../src/session/SessionProvider'
 import type { SessionClient } from '../src/session/client'
 import type { SessionState, SessionStats } from '../src/session/types'
-import { resetPrefsForTest } from '../src/store/prefs'
+import { getPrefs, resetPrefsForTest, setPref } from '../src/store/prefs'
 
 /* The live viewer's overlays and the stage underneath them.
  *
@@ -97,8 +97,14 @@ function setCoarsePointer() {
   })
 }
 
+/** Menu mode, on a phone: the bars are down until the menu button. */
+async function openMenu() {
+  await userEvent.click(screen.getByRole('button', { name: 'Show controls' }))
+}
+
 /** The soft keyboard's textarea, after the Keyboard button has been tapped. */
 async function openSoftKeyboard() {
+  if (screen.queryByRole('button', { name: 'Keyboard' }) === null) await openMenu()
   await userEvent.click(screen.getByRole('button', { name: 'Keyboard' }))
   return screen.getByRole('textbox', { name: 'Type on the computer' }) as HTMLTextAreaElement
 }
@@ -171,6 +177,92 @@ describe('Viewer overlays', () => {
     expect(screen.getByRole('button', { name: 'esc' })).toBeInTheDocument()
     await userEvent.click(keyboard)
     expect(screen.queryByRole('button', { name: 'esc' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Viewer menu', () => {
+  it('on a phone the bars stay down, and a touch does not raise them', async () => {
+    setCoarsePointer()
+    const { stage, sendPointer } = renderViewer()
+    expect(screen.queryByRole('button', { name: 'Keyboard' })).toBeNull()
+
+    fireEvent.pointerDown(stage, { pointerType: 'touch', clientX: 400, clientY: 300 })
+    fireEvent.pointerMove(stage, { pointerType: 'touch', clientX: 500, clientY: 300 })
+    expect(sendPointer).toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Keyboard' })).toBeNull()
+
+    await openMenu()
+    expect(screen.getByRole('button', { name: 'Keyboard' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Leave session' })).toBeInTheDocument()
+  })
+
+  it('pauses the desktop while the menu is up, and the tap that closes it goes nowhere', async () => {
+    setCoarsePointer()
+    const { stage, sendPointer } = renderViewer()
+    await openMenu()
+    hoverStage(stage)
+    expect(sendPointer).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close controls' }))
+    expect(sendPointer).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Keyboard' })).toBeNull()
+
+    hoverStage(stage)
+    expect(sendPointer).toHaveBeenCalledTimes(1)
+  })
+
+  it('the menu button itself toggles it', async () => {
+    setCoarsePointer()
+    renderViewer()
+    await openMenu()
+    await userEvent.click(screen.getByRole('button', { name: 'Hide controls' }))
+    expect(screen.queryByRole('button', { name: 'Keyboard' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show controls' })).toBeInTheDocument()
+  })
+
+  it('choosing an action closes the menu and leaves the desktop live', async () => {
+    setCoarsePointer()
+    const { stage, sendPointer } = renderViewer()
+    await openMenu()
+    await userEvent.click(screen.getByRole('button', { name: 'Connection stats' }))
+    expect(screen.getByLabelText('Connection stats', { selector: 'div' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Keyboard' })).toBeNull()
+
+    hoverStage(stage)
+    expect(sendPointer).toHaveBeenCalledWith(expect.objectContaining({ kind: 'move' }))
+  })
+
+  it('keeps the soft keyboard up through a visit to the menu', async () => {
+    setCoarsePointer()
+    const { stage, sendPointer } = renderViewer()
+    const composer = await openSoftKeyboard()
+    expect(document.activeElement).toBe(composer)
+
+    const menu = screen.getByRole('button', { name: 'Show controls' })
+    const down = createEvent.pointerDown(menu)
+    fireEvent(menu, down)
+    expect(down.defaultPrevented).toBe(true)
+    await userEvent.click(menu)
+    hoverStage(stage)
+    expect(sendPointer).not.toHaveBeenCalled()
+
+    const scrim = screen.getByRole('button', { name: 'Close controls' })
+    const scrimDown = createEvent.pointerDown(scrim)
+    fireEvent(scrim, scrimDown)
+    expect(scrimDown.defaultPrevented).toBe(true)
+    await userEvent.click(scrim)
+    expect(screen.getByRole('textbox', { name: 'Type on the computer' })).toBe(composer)
+  })
+
+  it('on a desktop browser the menu button is there too, and the bars still auto-show', async () => {
+    const { stage, sendPointer } = renderViewer()
+    expect(screen.getByRole('button', { name: 'Keyboard' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Show controls' }))
+    hoverStage(stage)
+    expect(sendPointer).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Hide controls' }))
+    hoverStage(stage)
+    expect(sendPointer).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -252,21 +344,15 @@ describe('Viewer soft keyboard', () => {
     expect(composer.value).toBe(PADDING + PADDING)
   })
 
-  it('a bar key keeps the keyboard up and resets the typed context', async () => {
+  it('puts nothing of its own over the OS keyboard', async () => {
     setCoarsePointer()
-    const { sendKey } = renderViewer()
-    const composer = await openSoftKeyboard()
-    typeInto(composer, PADDING + 'abc' + PADDING, PADDING.length + 3)
-
-    const esc = screen.getByRole('button', { name: 'esc' })
-    const down = createEvent.pointerDown(esc)
-    fireEvent(esc, down)
-    expect(down.defaultPrevented).toBe(true)
-    expect(document.activeElement).toBe(composer)
-
-    await userEvent.click(esc)
-    expect(sendKey).toHaveBeenCalledWith(expect.objectContaining({ kind: 'down', code: 'Escape' }))
-    expect(composer.value).toBe(PADDING + PADDING)
+    renderViewer()
+    await openSoftKeyboard()
+    // No modifier bar, no arrows, and no hide button either: the keyboard's
+    // own tick already does that, and a second row only hid the desktop.
+    expect(screen.queryByRole('button', { name: 'esc' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '←' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Hide keyboard' })).toBeNull()
   })
 
   it('a touch on the stage does not take focus from the composer', async () => {
@@ -285,5 +371,61 @@ describe('Viewer soft keyboard', () => {
     const composer = await openSoftKeyboard()
     act(() => composer.blur())
     await waitFor(() => expect(screen.queryByRole('textbox')).toBeNull())
+  })
+})
+
+/* Sound is a toggle on the bar, not an overlay: tapping it flips the
+ * preference and opens nothing. When the browser is holding sound back until
+ * it sees a gesture, the viewer says so with a prompt that is itself the
+ * gesture. */
+describe('Viewer sound', () => {
+  const stream = { id: 'remote' } as unknown as MediaStream
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+      value: null,
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  it('the bar button flips the sound preference and shows which way it is', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    renderViewer({ stream })
+    await userEvent.click(screen.getByRole('button', { name: 'Sound' }))
+    expect(getPrefs().sound).toBe(false)
+    expect(screen.getByRole('button', { name: 'Sound off' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    // Nothing opened; the stage is still live underneath.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Sound off' }))
+    expect(getPrefs().sound).toBe(true)
+  })
+
+  it('offers "Tap for sound" while the browser withholds it, and the tap fixes it', async () => {
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockRejectedValue(new DOMException('gesture required', 'NotAllowedError'))
+    const { container } = renderViewer({ stream })
+    const prompt = await screen.findByRole('button', { name: 'Tap for sound' })
+
+    play.mockResolvedValue(undefined)
+    await userEvent.click(prompt)
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Tap for sound' })).toBeNull(),
+    )
+    expect((container.querySelector('video') as HTMLVideoElement).muted).toBe(false)
+  })
+
+  it('shows no prompt when sound is off, however the browser feels about it', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockRejectedValue(
+      new DOMException('gesture required', 'NotAllowedError'),
+    )
+    setPref('sound', false)
+    renderViewer({ stream })
+    await act(async () => {})
+    expect(screen.queryByRole('button', { name: 'Tap for sound' })).toBeNull()
   })
 })

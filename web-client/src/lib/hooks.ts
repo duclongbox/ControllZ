@@ -60,39 +60,6 @@ export function useIsPortrait(): boolean {
   return portrait
 }
 
-/**
- * How much of the bottom of the window the OS keyboard covers, in CSS px.
- *
- * iOS does not shrink the layout viewport for its keyboard — it shrinks the
- * *visual* viewport and leaves the page as it was, so anything pinned to the
- * bottom is pinned under the keyboard. The difference between the two is the
- * keyboard. Android shrinks the layout viewport instead, and this reads 0
- * there, which is right: the bottom of the page is already above the keys.
- * Zero when `enabled` is off or the API is missing.
- */
-export function useKeyboardInset(enabled: boolean): number {
-  const [inset, setInset] = useState(0)
-
-  useEffect(() => {
-    const viewport = window.visualViewport
-    if (!enabled || !viewport) {
-      setInset(0)
-      return
-    }
-    const update = () =>
-      setInset(Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)))
-    update()
-    viewport.addEventListener('resize', update)
-    viewport.addEventListener('scroll', update)
-    return () => {
-      viewport.removeEventListener('resize', update)
-      viewport.removeEventListener('scroll', update)
-    }
-  }, [enabled])
-
-  return inset
-}
-
 /** Mirrors `navigator.onLine`, which is a lower bound: online can still fail. */
 export function useIsOnline(): boolean {
   const [online, setOnline] = useState(() =>

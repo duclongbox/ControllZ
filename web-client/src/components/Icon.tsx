@@ -6,6 +6,7 @@ const PATHS = {
   'chevron-left': 'M15 18l-6-6 6-6',
   'chevron-right': 'M9 18l6-6-6-6',
   'chevron-down': 'M6 9l6 6 6-6',
+  menu: 'M4 7h16M4 12h16M4 17h16',
   'chevron-up': 'M18 15l-6-6-6 6',
   close: 'M18 6L6 18M6 6l12 12',
   check: 'M20 6L9 17l-5-5',
@@ -45,6 +46,8 @@ const PATHS = {
   phone: 'M7 2h10a2 2 0 012 2v16a2 2 0 01-2 2H7a2 2 0 01-2-2V4a2 2 0 012-2z M11 18h2',
   server: 'M4 4h16v6H4z M4 14h16v6H4z M8 7h.01M8 17h.01',
   globe: 'M12 2a10 10 0 100 20 10 10 0 000-20z M2 12h20 M12 2a15 15 0 010 20 15 15 0 010-20z',
+  volume: 'M11 5L6 9H2v6h4l5 4z M15.5 8.5a5 5 0 010 7M19 5a9 9 0 010 14',
+  'volume-off': 'M11 5L6 9H2v6h4l5 4z M23 9l-6 6M17 9l6 6',
 } as const
 
 export type IconName = keyof typeof PATHS

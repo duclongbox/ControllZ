@@ -4,7 +4,7 @@ import { Banner } from '../components/Banner'
 import { ListGroup, ListRow } from '../components/List'
 import { SegmentedControl } from '../components/Segment'
 import type { ConnectionStatus } from '../components/StatusPill'
-import { useAutoHide, useKeyboardInset, useWakeLock } from '../lib/hooks'
+import { useAutoHide, useWakeLock } from '../lib/hooks'
 import type { NormalisedPoint } from '../lib/normalise'
 import { formatResolution } from '../lib/format'
 import { useSession, useSessionClient } from '../session/useSession'
@@ -25,11 +25,20 @@ import {
 import { PointerControl } from '../viewer/pointerControl'
 import type { StagePointerSample, StageWheelSample } from '../viewer/pointerControl'
 import { VideoStage } from '../viewer/VideoStage'
+import type { VideoStageHandle } from '../viewer/VideoStage'
 import { SoftKeyboard } from '../viewer/SoftKeyboard'
 import type { SoftKeyboardHandle } from '../viewer/SoftKeyboard'
 import { composerKeepsKey, prefersSoftKeyboard } from '../viewer/textComposer'
 import type { ComposerIntent } from '../viewer/textComposer'
-import { FloatingControl, ViewerBanner, ViewerBottomBar, ViewerTopBar } from '../viewer/chrome'
+import {
+  FloatingControl,
+  MenuButton,
+  MenuScrim,
+  SoundPrompt,
+  ViewerBanner,
+  ViewerBottomBar,
+  ViewerTopBar,
+} from '../viewer/chrome'
 import type { ViewerAction } from '../viewer/chrome'
 import {
   CursorPuck,
@@ -45,7 +54,9 @@ import { ConnectRejected } from './ConnectRejected'
 import { SessionEnded } from './SessionEnded'
 import styles from './Viewer.module.css'
 
-type Overlay = Exclude<ViewerAction, 'fullscreen'> | null
+/* Fullscreen and sound are toggles, not overlays: they flip a state and
+ * nothing opens. */
+type Overlay = Exclude<ViewerAction, 'fullscreen' | 'sound'> | null
 
 /**
  * Whether an overlay takes the stage away from the user. The side panels do:
@@ -114,16 +125,31 @@ export function Viewer() {
   const [pointerMode, setPointerMode] = useState<PointerMode>(prefs.pointerMode)
   const [latched, setLatched] = useState<string[]>([])
   const [keyNotice, setKeyNotice] = useState<KeyNotice>(null)
-  const stageCovered = coversStage(overlay)
   const fullscreen = useFullscreen()
 
-  // On a phone the Keyboard button raises the OS keyboard, typing through a
-  // hidden textarea (SoftKeyboard). Decided once: it is a property of the
-  // device, and flipping it mid-session would strand a focused textarea.
-  const [softKeyboard] = useState(() => prefersSoftKeyboard())
+  // On a phone (a coarse pointer) the viewer is touch-first: the Keyboard
+  // button raises the OS keyboard, typing through a hidden textarea
+  // (SoftKeyboard), and the chrome is reached through the menu button rather
+  // than woken by every touch. Decided once: it is a property of the device,
+  // and flipping it mid-session would strand a focused textarea.
+  const [touchUi] = useState(() => prefersSoftKeyboard())
+  const softKeyboard = touchUi
+
+  // Menu mode: both bars up and the stage paused, entered and left through
+  // the menu button. On a phone it is the only way the bars come up. They
+  // used to wake on every touch, and since they sit over the top and bottom
+  // strips of the picture — the remote menu bar, Dock and taskbar — those
+  // were then unreachable from a finger, which only ever hit our bar.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const stageCovered = coversStage(overlay) || menuOpen
   const softKeyboardRef = useRef<SoftKeyboardHandle>(null)
   const composerOpen = softKeyboard && overlay === 'keyboard'
-  const keyboardInset = useKeyboardInset(composerOpen)
+
+  // Sound is a preference, so it survives into the next session; whether the
+  // browser is actually letting it play is this session's business. The
+  // stage reports the latter, and the prompt it drives is the way to fix it.
+  const stageRef = useRef<VideoStageHandle>(null)
+  const [audioBlocked, setAudioBlocked] = useState(false)
 
   // The virtual cursor lives in PointerControl, not in React state: it is
   // updated on every pointer sample, and routing 120 Hz of that through a
@@ -137,10 +163,12 @@ export function Viewer() {
   // Chrome holds open while a panel is up — hiding it under an open sheet would
   // strand the user with no way back. A delay of 0 is the "never hide"
   // setting, which is the same thing as the auto-hide being disabled.
+  // A mouse only: on a phone the bars are the menu's, down until it opens.
   const { visible, wake, hold } = useAutoHide(
     prefs.hideChromeAfterMs || 3000,
-    !stageCovered && prefs.hideChromeAfterMs > 0,
+    !touchUi && !stageCovered && prefs.hideChromeAfterMs > 0,
   )
+  const barsVisible = touchUi ? menuOpen : visible
 
   // Only while media is actually flowing: a lock held through a ten-second
   // handshake that then fails is a lock taken for nothing.
@@ -172,9 +200,9 @@ export function Viewer() {
 
   const handleStageActivity = useCallback(
     (pointerType: string) => {
-      if (pointerType !== 'mouse') wake()
+      if (!touchUi && pointerType !== 'mouse') wake()
     },
-    [wake],
+    [touchUi, wake],
   )
 
   const handlePointer = useCallback(
@@ -250,16 +278,26 @@ export function Viewer() {
     }
   }, [client, control])
 
+  const toggleMenu = useCallback(() => setMenuOpen((open) => !open), [])
+  const closeMenu = useCallback(() => setMenuOpen(false), [])
+
+  // Choosing anything closes the menu: what was chosen is now the thing being
+  // used, and the stage comes back live underneath it.
   const handleAction = useCallback(
     (action: ViewerAction) => {
+      setMenuOpen(false)
       wake()
       if (action === 'fullscreen') {
         void toggleFullscreen()
         return
       }
+      if (action === 'sound') {
+        setPref('sound', !prefs.sound)
+        return
+      }
       setOverlay((current) => (current === action ? null : action))
     },
-    [wake],
+    [prefs.sound, wake],
   )
 
   const toggleLatch = useCallback((code: string) => {
@@ -278,9 +316,6 @@ export function Viewer() {
         client.sendKey({ kind: 'up', code: modifier, repeat: false })
       }
       setLatched([])
-      // The remote caret moved (an arrow, an Escape): whatever the soft
-      // keyboard thinks the current word is, it no longer is.
-      softKeyboardRef.current?.reset()
     },
     [client, latched],
   )
@@ -473,13 +508,15 @@ export function Viewer() {
   const track = state.stats
     ? { width: state.stats.width, height: state.stats.height }
     : { width: 1920, height: 1080 }
-  const dim = overlay === 'quality' || overlay === 'monitor' ? 0.45 : 0
+  // The stage is dimmed whenever it is paused, so the pause can be seen.
+  const dim = coversStage(overlay) ? 0.45 : menuOpen ? 0.3 : 0
   const reconnecting = state.phase === 'reconnecting'
   const activeDisplay = state.device?.displays.find((d) => d.id === state.activeDisplayId)
 
   return (
     <div className={styles.viewer}>
       <VideoStage
+        ref={stageRef}
         trackSize={track}
         stream={state.stream}
         dim={reconnecting ? 0.66 : dim}
@@ -487,6 +524,8 @@ export function Viewer() {
         onPointer={stageCovered ? undefined : handlePointer}
         onWheel={stageCovered ? undefined : handleWheel}
         holdFocus={composerOpen}
+        muted={!prefs.sound}
+        onAudioBlocked={setAudioBlocked}
       >
         {(box) =>
           pointerMode === 'trackpad' && !reconnecting ? (
@@ -504,22 +543,31 @@ export function Viewer() {
           <ReconnectOverlay onEnd={() => client.end()} />
         ) : (
           <>
+            {menuOpen ? <MenuScrim onClose={closeMenu} /> : null}
+
             <ViewerTopBar
               deviceName={deviceName}
               status={status}
               statusLabel={label}
               rttMs={state.stats?.rttMs ?? null}
-              visible={visible}
+              visible={barsVisible}
               onBack={() => client.end()}
             />
 
             <ViewerBottomBar
               active={overlay}
               fullscreen={fullscreen}
-              visible={visible}
+              sound={prefs.sound}
+              visible={barsVisible}
               onAction={handleAction}
               onEnd={() => client.end()}
             />
+
+            <MenuButton open={menuOpen} onToggle={toggleMenu} />
+
+            {audioBlocked && prefs.sound && !stageCovered ? (
+              <SoundPrompt onClick={() => void stageRef.current?.unmute()} />
+            ) : null}
 
             {keyNotice === 'reserved' && overlay === null ? (
               <ViewerBanner>
@@ -545,7 +593,7 @@ export function Viewer() {
                   Every key was released on {deviceName}.
                 </Banner>
               </ViewerBanner>
-            ) : state.transport === 'relayed' && overlay === null && visible ? (
+            ) : state.transport === 'relayed' && overlay === null && barsVisible ? (
               <ViewerBanner>
                 <Banner tone="warn" title="Relayed connection">
                   No direct path to {deviceName}, so media is going
@@ -574,21 +622,17 @@ export function Viewer() {
               </FloatingControl>
             ) : null}
 
-            {overlay === 'keyboard' ? (
-              <ModifierBar
-                latched={latched}
-                onToggle={toggleLatch}
-                onKey={sendKey}
-                keyboardInset={keyboardInset}
-              >
-                {softKeyboard ? (
-                  <SoftKeyboard
-                    ref={softKeyboardRef}
-                    onIntent={handleComposerIntent}
-                    onDismiss={handleComposerDismiss}
-                  />
-                ) : null}
-              </ModifierBar>
+            {overlay === 'keyboard' && softKeyboard ? (
+              // The phone: the OS keyboard and nothing of ours on top of it.
+              // Its own hide key (iOS's tick, Android's back) puts it away,
+              // through the textarea's blur. The modifier bar is deferred.
+              <SoftKeyboard
+                ref={softKeyboardRef}
+                onIntent={handleComposerIntent}
+                onDismiss={handleComposerDismiss}
+              />
+            ) : overlay === 'keyboard' ? (
+              <ModifierBar latched={latched} onToggle={toggleLatch} onKey={sendKey} />
             ) : null}
 
             {overlay === 'quality' ? (

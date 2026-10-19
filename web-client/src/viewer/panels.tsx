@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { Icon } from '../components/Icon'
-import { cn } from '../lib/cn'
 import { StatChip } from '../components/StatChip'
 import { ModifierKey } from '../components/ModifierKey'
 import { Button } from '../components/Button'
@@ -155,30 +154,20 @@ const ARROWS = [
  * Sits directly above the OS keyboard. We never draw a keyboard ourselves —
  * the real one renders on top, and a painted fake would read as doubled up.
  *
- * `keyboardInset` is how much of the window the OS keyboard covers (see
- * useKeyboardInset); when it is more than nothing the bar sits on top of
- * the keyboard instead of above the bottom bar, which is under it by then.
- * `children` is the hidden composer the keyboard types into.
+ * Desktop browsers only, now: on a phone the OS keyboard is the keyboard and
+ * this row on top of it hid the desktop, so there it is deferred.
  */
 export function ModifierBar({
   latched,
   onToggle,
   onKey,
-  keyboardInset = 0,
-  children,
 }: {
   latched: readonly string[]
   onToggle: (code: string) => void
   onKey: (code: string) => void
-  keyboardInset?: number
-  children?: ReactNode
 }) {
   return (
-    <div
-      className={cn(styles.modifiers, keyboardInset > 0 && styles.modifiersLifted)}
-      style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
-    >
-      {children}
+    <div className={styles.modifiers}>
       {MODIFIERS.map((key) => (
         <ModifierKey
           key={key.code}
