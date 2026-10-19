@@ -115,3 +115,71 @@ export function encodePointerMessage(intent: PointerIntent, seq: number, at: num
 
   return JSON.stringify(message)
 }
+
+/**
+ * One physical key going down or up, for the `keys` channel — ordered and
+ * reliable, unlike everything above (shared/schemas/input/key.schema.json).
+ *
+ * `code` is `KeyboardEvent.code`, a position. The desktop's own layout decides
+ * the character, so this never carries one.
+ */
+export interface KeyIntent {
+  kind: 'down' | 'up'
+  code: string
+  /** An autorepeat from the sender's OS. Only meaningful on `down`. */
+  repeat: boolean
+}
+
+export function encodeKeyMessage(intent: KeyIntent, at: number): string {
+  const message: Record<string, unknown> = {
+    type: intent.kind === 'down' ? 'keyDown' : 'keyUp',
+    code: intent.code,
+    t: at,
+  }
+  if (intent.kind === 'down' && intent.repeat) message.repeat = true
+  return JSON.stringify(message)
+}
+
+/**
+ * A run of characters from the phone's on-screen keyboard, for the `keys`
+ * channel (shared/schemas/input/text.schema.json). The one keyboard message
+ * that carries characters, because a soft keyboard has no positions to send:
+ * the host types them as-is, bypassing its own layout, with no modifiers.
+ * Never a control character — the composer turns line breaks and tabs into
+ * Enter and Tab key presses, which travel as keyDown/keyUp like any other.
+ */
+export const MAX_TEXT_LENGTH = 1024
+
+export function encodeTextMessage(text: string, at: number): string {
+  return JSON.stringify({ type: 'text', text, t: at })
+}
+
+/**
+ * The desktop's OS, from the one desktop → phone message on an input channel
+ * (shared/schemas/input/hostInfo.schema.json). `mac` is the Command family;
+ * the other two are the Control family. Null until the host has said.
+ */
+export const HOST_PLATFORMS = ['windows', 'mac', 'linux'] as const
+export type HostPlatform = (typeof HOST_PLATFORMS)[number]
+
+/**
+ * The host's `hostInfo` hello, or null for anything else. Anything else
+ * includes garbage: the peer is untrusted, so an unknown platform is ignored
+ * rather than guessed at — the phone then translates nothing, which is what
+ * it did before the message existed.
+ */
+export function parseHostInfo(data: unknown): HostPlatform | null {
+  if (typeof data !== 'string') return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null
+  const message = parsed as Record<string, unknown>
+  if (message.type !== 'hostInfo') return null
+  return (HOST_PLATFORMS as readonly unknown[]).includes(message.platform)
+    ? (message.platform as HostPlatform)
+    : null
+}

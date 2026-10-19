@@ -65,6 +65,8 @@ add_library(desktophost_core STATIC
     src/signaling/signaling_client_ws.cpp
     src/input/input_protocol.cpp
     src/input/input_router.cpp
+    src/input/key_codes.cpp
+    src/input/keyboard_router.cpp
     src/input/pointer_mapping.cpp
 )
 
@@ -116,6 +118,10 @@ if(APPLE)
         # AXIsProcessTrustedWithOptions — the Accessibility grant that
         # CGEventPost requires.
         "-framework ApplicationServices"
+        # Keyboard injection: KBGetLayoutType / LMGetKbdType (HIToolbox) for
+        # the ISO key swap, IOHIDSystem for the CapsLock lock state.
+        "-framework Carbon"
+        "-framework IOKit"
         "-framework CoreFoundation"
         "-framework Foundation"
     )

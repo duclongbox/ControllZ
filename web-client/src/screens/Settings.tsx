@@ -4,6 +4,7 @@ import { ListGroup, ListRow } from '../components/List'
 import { NavBar, Overline, Screen } from '../components/Screen'
 import { Toggle } from '../components/Toggle'
 import { getPhoneDeviceId } from '../session/wsClient'
+import type { ShortcutModifiers } from '../session/types'
 import { HIDE_DELAYS, setPref, usePrefs } from '../store/prefs'
 import styles from './devices.module.css'
 
@@ -13,13 +14,26 @@ function shortId(id: string | null): string {
   return id.length <= 13 ? id : `${id.slice(0, 8)}…${id.slice(-4)}`
 }
 
+/* The desktop maps every key by position, so Command on a Mac keyboard lands
+ * on a Windows desktop as the Windows key. Swapping it with Ctrl is what makes
+ * ⌘C copy over there; the phone decides, from the OS the desktop reports. */
+const SHORTCUT_OPTIONS: Array<{ value: ShortcutModifiers; label: string; sub: string }> = [
+  { value: 'auto', label: 'Match the computer', sub: 'Swap ⌘ and Ctrl when only one side is a Mac' },
+  { value: 'swap', label: 'Always swap ⌘ and Ctrl', sub: 'Whatever the computer reports' },
+  { value: 'off', label: 'Never swap', sub: 'Every key goes by its position' },
+]
+
 export function Settings() {
   const navigate = useNavigate()
   const prefs = usePrefs()
   const [pickingDelay, setPickingDelay] = useState(false)
+  const [pickingShortcuts, setPickingShortcuts] = useState(false)
 
   const delayLabel =
     HIDE_DELAYS.find((option) => option.value === prefs.hideChromeAfterMs)?.label ?? '3 seconds'
+  const shortcutLabel =
+    SHORTCUT_OPTIONS.find((option) => option.value === prefs.shortcutModifiers)?.label ??
+    SHORTCUT_OPTIONS[0].label
 
   return (
     <Screen compact>
@@ -82,6 +96,38 @@ export function Settings() {
             ))}
           </ListGroup>
         ) : null}
+      </div>
+
+      <div className={styles.section}>
+        <Overline>Keyboard</Overline>
+        <ListGroup>
+          <ListRow
+            label="Shortcut keys"
+            value={shortcutLabel}
+            onClick={() => setPickingShortcuts((open) => !open)}
+          />
+        </ListGroup>
+
+        {pickingShortcuts ? (
+          <ListGroup>
+            {SHORTCUT_OPTIONS.map((option) => (
+              <ListRow
+                key={option.value}
+                label={option.label}
+                sub={option.sub}
+                selected={option.value === prefs.shortcutModifiers}
+                onClick={() => {
+                  setPref('shortcutModifiers', option.value)
+                  setPickingShortcuts(false)
+                }}
+              />
+            ))}
+          </ListGroup>
+        ) : null}
+        <span className={styles.note}>
+          Ctrl+W, Ctrl+T and other shortcuts the browser reserves never reach the computer. Use the
+          on-screen modifier keys for those.
+        </span>
       </div>
 
       <div className={styles.section}>

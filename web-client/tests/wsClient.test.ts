@@ -64,6 +64,7 @@ class FakeDataChannel {
   readyState: RTCDataChannelState = 'open'
   sent: string[] = []
   onclose: (() => void) | null = null
+  onmessage: ((event: { data: unknown }) => void) | null = null
 
   constructor(label: string) {
     this.label = label
@@ -631,6 +632,80 @@ describe('wsClient input channel', () => {
     expect(channel.messages.map((m) => m.type)).toEqual(['scroll', 'pointerDown'])
     await new Promise((resolve) => setTimeout(resolve, 40))
     expect(channel.messages).toHaveLength(2)
+    client.dispose()
+  })
+
+  it('sends keys on their own channel, not the pointer one', async () => {
+    const { client, peer } = await streaming()
+    const input = peer.offerDataChannel('input')
+    const keys = peer.offerDataChannel('keys')
+
+    client.sendKey({ kind: 'down', code: 'KeyA', repeat: false })
+    client.sendKey({ kind: 'down', code: 'KeyA', repeat: true })
+    client.sendKey({ kind: 'up', code: 'KeyA', repeat: false })
+
+    expect(input.messages).toHaveLength(0)
+    // Immediately and in order: never coalesced, never reordered.
+    expect(keys.messages).toEqual([
+      { type: 'keyDown', code: 'KeyA', t: expect.any(Number) },
+      { type: 'keyDown', code: 'KeyA', t: expect.any(Number), repeat: true },
+      { type: 'keyUp', code: 'KeyA', t: expect.any(Number) },
+    ])
+    expect(keys.readyState).not.toBe('closed')
+    client.dispose()
+  })
+
+  it('sends soft-keyboard text on the keys channel, in order with the keys', async () => {
+    const { client, peer } = await streaming()
+    const input = peer.offerDataChannel('input')
+    const keys = peer.offerDataChannel('keys')
+
+    client.sendKey({ kind: 'down', code: 'Backspace', repeat: false })
+    client.sendKey({ kind: 'up', code: 'Backspace', repeat: false })
+    client.sendText('héllo 😀')
+
+    expect(input.messages).toHaveLength(0)
+    // An autocorrection is "two Backspaces, then the word": only in order
+    // does it mean anything, which is why text shares the keys channel.
+    expect(keys.messages).toEqual([
+      { type: 'keyDown', code: 'Backspace', t: expect.any(Number) },
+      { type: 'keyUp', code: 'Backspace', t: expect.any(Number) },
+      { type: 'text', text: 'héllo 😀', t: expect.any(Number) },
+    ])
+    client.dispose()
+  })
+
+  it('drops text silently when the host offered no keys channel', async () => {
+    const { client, peer } = await streaming()
+    peer.offerDataChannel('input')
+    expect(() => client.sendText('a')).not.toThrow()
+    client.dispose()
+  })
+
+  it('learns the host OS from the hello on the keys channel', async () => {
+    const { client, peer } = await streaming()
+    const keys = peer.offerDataChannel('keys')
+    expect(client.getState().hostPlatform).toBeNull()
+
+    keys.onmessage?.({ data: '{"platform":"windows","type":"hostInfo"}' })
+    expect(client.getState().hostPlatform).toBe('windows')
+    client.dispose()
+  })
+
+  it('ignores anything else the keys channel carries back', async () => {
+    const { client, peer } = await streaming()
+    const keys = peer.offerDataChannel('keys')
+    keys.onmessage?.({ data: '{"type":"keyDown","code":"KeyA"}' })
+    keys.onmessage?.({ data: '{"type":"hostInfo","platform":"beos"}' })
+    keys.onmessage?.({ data: new ArrayBuffer(8) })
+    expect(client.getState().hostPlatform).toBeNull()
+    client.dispose()
+  })
+
+  it('drops keys silently when the host offered no keys channel', async () => {
+    const { client, peer } = await streaming()
+    peer.offerDataChannel('input')
+    expect(() => client.sendKey({ kind: 'down', code: 'KeyA', repeat: false })).not.toThrow()
     client.dispose()
   })
 

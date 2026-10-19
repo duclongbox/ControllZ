@@ -4,7 +4,7 @@ import { Banner } from '../components/Banner'
 import { ListGroup, ListRow } from '../components/List'
 import { SegmentedControl } from '../components/Segment'
 import type { ConnectionStatus } from '../components/StatusPill'
-import { useAutoHide, useWakeLock } from '../lib/hooks'
+import { useAutoHide, useKeyboardInset, useWakeLock } from '../lib/hooks'
 import type { NormalisedPoint } from '../lib/normalise'
 import { formatResolution } from '../lib/format'
 import { useSession, useSessionClient } from '../session/useSession'
@@ -12,9 +12,23 @@ import { getDevice, markConnected } from '../store/devices'
 import { setPref, usePrefs } from '../store/prefs'
 import type { PointerMode, QualityPriority, SessionState } from '../session/types'
 import { atRevealEdge, REVEAL_DWELL_MS } from '../viewer/chromeReveal'
+import { isFullscreen, toggleFullscreen, useFullscreen } from '../viewer/fullscreen'
+import { ALTGR_WINDOW_MS, KeyboardControl, detectPlatform, isModifier } from '../viewer/keyboardControl'
+import type { ClientPlatform } from '../viewer/keyboardControl'
+import {
+  browserShortcutModifiers,
+  escapedToBrowser,
+  reservedShortcutLabels,
+  shouldSwapModifiers,
+  translateIntent,
+} from '../viewer/shortcutTranslation'
 import { PointerControl } from '../viewer/pointerControl'
 import type { StagePointerSample, StageWheelSample } from '../viewer/pointerControl'
 import { VideoStage } from '../viewer/VideoStage'
+import { SoftKeyboard } from '../viewer/SoftKeyboard'
+import type { SoftKeyboardHandle } from '../viewer/SoftKeyboard'
+import { composerKeepsKey, prefersSoftKeyboard } from '../viewer/textComposer'
+import type { ComposerIntent } from '../viewer/textComposer'
 import { FloatingControl, ViewerBanner, ViewerBottomBar, ViewerTopBar } from '../viewer/chrome'
 import type { ViewerAction } from '../viewer/chrome'
 import {
@@ -32,6 +46,41 @@ import { SessionEnded } from './SessionEnded'
 import styles from './Viewer.module.css'
 
 type Overlay = Exclude<ViewerAction, 'fullscreen'> | null
+
+/**
+ * Whether an overlay takes the stage away from the user. The side panels do:
+ * they dim the frame and are the thing being worked. The stats card, the
+ * pointer-mode control and the modifier bar are furniture *around* the frame —
+ * a readout you check while you work, keys you tap between keystrokes — and
+ * the desktop stays live underneath them. Only a covering overlay suspends
+ * pointer input, and only a covering overlay holds the chrome open: holding it
+ * for a readout would park the bars over the remote menu bar and taskbar for
+ * as long as the readout was up.
+ */
+function coversStage(overlay: Overlay): boolean {
+  return overlay === 'quality' || overlay === 'monitor'
+}
+
+/**
+ * What the viewer has to say about the physical keyboard. `reserved` is the
+ * once-a-session heads-up that some chords never leave the browser; `escaped`
+ * is the after-the-fact note that one just did.
+ */
+type KeyNotice = 'reserved' | 'escaped' | null
+
+/** How long a keyboard notice stays up on its own. */
+const KEY_NOTICE_MS = 8000
+
+/** A text field of our own, which keeps its keystrokes. */
+function isEditable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  )
+}
 
 const QUALITY_OPTIONS: Array<{ value: QualityPriority; label: string; sub: string }> = [
   { value: 'auto', label: 'Automatic', sub: 'Adapts to the link, 1 s loop' },
@@ -64,6 +113,17 @@ export function Viewer() {
   const [overlay, setOverlay] = useState<Overlay>(prefs.showStats ? 'stats' : null)
   const [pointerMode, setPointerMode] = useState<PointerMode>(prefs.pointerMode)
   const [latched, setLatched] = useState<string[]>([])
+  const [keyNotice, setKeyNotice] = useState<KeyNotice>(null)
+  const stageCovered = coversStage(overlay)
+  const fullscreen = useFullscreen()
+
+  // On a phone the Keyboard button raises the OS keyboard, typing through a
+  // hidden textarea (SoftKeyboard). Decided once: it is a property of the
+  // device, and flipping it mid-session would strand a focused textarea.
+  const [softKeyboard] = useState(() => prefersSoftKeyboard())
+  const softKeyboardRef = useRef<SoftKeyboardHandle>(null)
+  const composerOpen = softKeyboard && overlay === 'keyboard'
+  const keyboardInset = useKeyboardInset(composerOpen)
 
   // The virtual cursor lives in PointerControl, not in React state: it is
   // updated on every pointer sample, and routing 120 Hz of that through a
@@ -79,7 +139,7 @@ export function Viewer() {
   // setting, which is the same thing as the auto-hide being disabled.
   const { visible, wake, hold } = useAutoHide(
     prefs.hideChromeAfterMs || 3000,
-    overlay === null && prefs.hideChromeAfterMs > 0,
+    !stageCovered && prefs.hideChromeAfterMs > 0,
   )
 
   // Only while media is actually flowing: a lock held through a ten-second
@@ -98,12 +158,16 @@ export function Viewer() {
   }, [client, deviceId])
 
   useEffect(() => {
-    if (overlay !== null) hold()
-  }, [overlay, hold])
+    if (stageCovered) hold()
+  }, [stageCovered, hold])
 
   // A mouse brings the chrome back by resting on the top edge, not by moving:
-  // see viewer/chromeReveal.ts for why hover must not wake it.
+  // see viewer/chromeReveal.ts for why hover must not wake it. Once it is
+  // back it stays for as long as the mouse rests there — a bar that appears
+  // under a still mouse and then times out from under it would have to be
+  // summoned all over again — and the countdown starts when the mouse leaves.
   const revealTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const revealedByEdge = useRef(false)
   useEffect(() => () => clearTimeout(revealTimer.current), [])
 
   const handleStageActivity = useCallback(
@@ -115,14 +179,25 @@ export function Viewer() {
 
   const handlePointer = useCallback(
     (sample: StagePointerSample) => {
+      // The stage holds focus on a touch (VideoStage `holdFocus`); this is
+      // the belt to those braces, from inside the gesture, so an OS keyboard
+      // that got dismissed anyway comes straight back.
+      if (sample.kind === 'up') softKeyboardRef.current?.focus()
       if (atRevealEdge(sample)) {
         revealTimer.current ??= setTimeout(() => {
           revealTimer.current = undefined
-          wake()
+          revealedByEdge.current = true
+          hold()
         }, REVEAL_DWELL_MS)
-      } else if (revealTimer.current !== undefined) {
-        clearTimeout(revealTimer.current)
-        revealTimer.current = undefined
+      } else {
+        if (revealTimer.current !== undefined) {
+          clearTimeout(revealTimer.current)
+          revealTimer.current = undefined
+        }
+        if (revealedByEdge.current) {
+          revealedByEdge.current = false
+          wake()
+        }
       }
 
       for (const intent of control.handle(sample)) {
@@ -133,7 +208,7 @@ export function Viewer() {
       }
       setCursor(control.getCursor())
     },
-    [client, control, prefs.haptics, wake],
+    [client, control, hold, prefs.haptics, wake],
   )
 
   const handleWheel = useCallback(
@@ -158,11 +233,11 @@ export function Viewer() {
   // would eventually let go, but a second of stuck mouse button is a second of
   // the desktop doing something nobody asked for.
   useEffect(() => {
-    if (overlay === null) return
+    if (!stageCovered) return
     for (const intent of control.abandon()) {
       client.sendPointer(intent)
     }
-  }, [client, control, overlay])
+  }, [client, control, stageCovered])
 
   // Same hazard at the end of the session: a finger still down when the stage
   // unmounts owes the desktop a release. The host's deadman covers the case
@@ -179,7 +254,7 @@ export function Viewer() {
     (action: ViewerAction) => {
       wake()
       if (action === 'fullscreen') {
-        void document.documentElement.requestFullscreen?.().catch(() => {})
+        void toggleFullscreen()
         return
       }
       setOverlay((current) => (current === action ? null : action))
@@ -191,14 +266,176 @@ export function Viewer() {
     setLatched((keys) => (keys.includes(code) ? keys.filter((k) => k !== code) : [...keys, code]))
   }, [])
 
+  // The on-screen bar: a tap is a whole keystroke, with any latched modifiers
+  // wrapped around it — pressed first, released last, like a hand would.
   const sendKey = useCallback(
     (code: string) => {
-      client.sendKey('down', code, latched)
-      client.sendKey('up', code, latched)
+      const modifiers = latched.filter(isModifier)
+      for (const modifier of modifiers) client.sendKey({ kind: 'down', code: modifier, repeat: false })
+      client.sendKey({ kind: 'down', code, repeat: false })
+      client.sendKey({ kind: 'up', code, repeat: false })
+      for (const modifier of [...modifiers].reverse()) {
+        client.sendKey({ kind: 'up', code: modifier, repeat: false })
+      }
       setLatched([])
+      // The remote caret moved (an arrow, an Escape): whatever the soft
+      // keyboard thinks the current word is, it no longer is.
+      softKeyboardRef.current?.reset()
     },
     [client, latched],
   )
+
+  // The soft keyboard's output: text as text, its edits as the key they are.
+  // Latched modifiers are not applied to text (deferred, see the catalog):
+  // the characters are already what the user meant.
+  const handleComposerIntent = useCallback(
+    (intent: ComposerIntent) => {
+      if (intent.kind === 'text') {
+        client.sendText(intent.text)
+        return
+      }
+      client.sendKey({ kind: 'down', code: intent.code, repeat: false })
+      client.sendKey({ kind: 'up', code: intent.code, repeat: false })
+    },
+    [client],
+  )
+
+  const handleComposerDismiss = useCallback(() => {
+    setOverlay((current) => (current === 'keyboard' ? null : current))
+  }, [])
+
+  // The physical keyboard. Listened to on the window, not the stage: the
+  // stage never takes focus, and keys should reach the desktop wherever the
+  // mouse happens to be.
+  const platformRef = useRef<ClientPlatform | null>(null)
+  if (platformRef.current === null) platformRef.current = detectPlatform()
+  const platform = platformRef.current
+  const keyboardRef = useRef<KeyboardControl | null>(null)
+  if (keyboardRef.current === null) keyboardRef.current = new KeyboardControl(platform)
+  const keyboard = keyboardRef.current
+  const streaming = state.phase === 'streaming'
+
+  // Cmd ⇄ Ctrl. Read through a ref so a change does not re-run the listener
+  // effect below (which would release every key as a side effect); instead,
+  // the keys held under the old mapping are released under it first, or the
+  // desktop would be left holding a Ctrl whose keyup arrives as a Cmd.
+  const swap = shouldSwapModifiers(prefs.shortcutModifiers, platform, state.hostPlatform)
+  const swapRef = useRef(swap)
+  useEffect(() => {
+    if (swapRef.current === swap) return
+    for (const intent of keyboard.releaseAll()) {
+      client.sendKey(translateIntent(intent, swapRef.current))
+    }
+    swapRef.current = swap
+  }, [client, keyboard, swap])
+
+  // A keyboard notice goes away on its own; the user can also dismiss it.
+  useEffect(() => {
+    if (keyNotice === null) return
+    const timer = setTimeout(() => setKeyNotice(null), KEY_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [keyNotice])
+
+  // Ctrl+W, Cmd+W and Cmd+Q cannot be cancelled by a page — but a page can
+  // make the browser ask first. The prompt is the browser's own; its text is
+  // not ours to write. This is the only "before" hook there is for a chord the
+  // browser keeps, so it runs for the whole of a live session.
+  useEffect(() => {
+    if (!streaming) return
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      // Legacy engines want a string; modern ones ignore it. Both ways ask.
+      event.returnValue = 'A remote session is live.'
+    }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [streaming])
+
+  useEffect(() => {
+    if (!streaming) return
+    let flushTimer: ReturnType<typeof setTimeout> | undefined
+    // The heads-up about browser-owned chords is shown once per session, the
+    // first time the modifier they are built on goes down.
+    let reservedShown = false
+    const browserModifiers = browserShortcutModifiers(platform)
+
+    const send = (intents: ReturnType<KeyboardControl['releaseAll']>) => {
+      for (const intent of intents) client.sendKey(translateIntent(intent, swapRef.current))
+    }
+
+    const onKey = (event: KeyboardEvent) => {
+      const composer = softKeyboardRef.current
+      if (composer?.owns(event.target)) {
+        // The soft keyboard's textarea. Its characters and edits stay with
+        // it and arrive as a diff of its content; what it cannot type —
+        // Tab, arrows, Escape, a chord from a hardware keyboard — goes on as
+        // a physical key, and the typed context is stale once it has.
+        if (composerKeepsKey(event)) return
+        if (event.type === 'keydown' && !isModifier(event.code)) composer.reset()
+      } else if (isEditable(event.target)) {
+        // A field in one of our own panels keeps its keys.
+        return
+      }
+      // In fullscreen, Esc is the browser's exit key and leaves fullscreen
+      // whatever a page does — it would reach the desktop as a stray Escape
+      // on the way out. The on-screen esc key still sends one on purpose.
+      // (The keyup that follows is dropped by KeyboardControl: never pressed.)
+      if (event.code === 'Escape' && isFullscreen()) return
+      // Everything else is the desktop's: Tab must not move our focus, Space
+      // must not scroll our page, Backspace must not navigate back. Keys the
+      // browser or the OS reserve (Ctrl+W, Alt+Tab) never reach a page at
+      // all — capturing those (Keyboard Lock) is the deferred shortcut work;
+      // until then the user is told, before (here) and after (on blur).
+      event.preventDefault()
+      if (event.type === 'keydown' && !reservedShown && browserModifiers.includes(event.code)) {
+        reservedShown = true
+        setKeyNotice('reserved')
+      }
+      send(
+        keyboard.handle({
+          type: event.type === 'keydown' ? 'keydown' : 'keyup',
+          code: event.code,
+          repeat: event.repeat,
+          at: event.timeStamp,
+        }),
+      )
+      clearTimeout(flushTimer)
+      if (keyboard.hasPending()) {
+        flushTimer = setTimeout(() => send(keyboard.flushPending()), ALTGR_WINDOW_MS)
+      }
+    }
+
+    const releaseAll = () => {
+      clearTimeout(flushTimer)
+      send(keyboard.releaseAll())
+    }
+    // Every way the keyups stop coming: the window loses focus (Alt+Tab,
+    // clicking another app), the tab is hidden, the page is going away. A
+    // modifier held at that moment means a chord the browser or OS took for
+    // itself — Ctrl+T opened a tab, Alt+Tab switched apps — so say so when
+    // the user gets back.
+    const onFocusLost = () => {
+      if (escapedToBrowser(keyboard.getHeld())) setKeyNotice('escaped')
+      releaseAll()
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') onFocusLost()
+    }
+
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKey, true)
+    window.addEventListener('blur', onFocusLost)
+    window.addEventListener('pagehide', onFocusLost)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKey, true)
+      window.removeEventListener('blur', onFocusLost)
+      window.removeEventListener('pagehide', onFocusLost)
+      document.removeEventListener('visibilitychange', onVisibility)
+      releaseAll()
+    }
+  }, [client, keyboard, platform, streaming])
 
   // ---- non-streaming phases render their own screen -----------------------
 
@@ -247,8 +484,9 @@ export function Viewer() {
         stream={state.stream}
         dim={reconnecting ? 0.66 : dim}
         onActivity={handleStageActivity}
-        onPointer={overlay === null ? handlePointer : undefined}
-        onWheel={overlay === null ? handleWheel : undefined}
+        onPointer={stageCovered ? undefined : handlePointer}
+        onWheel={stageCovered ? undefined : handleWheel}
+        holdFocus={composerOpen}
       >
         {(box) =>
           pointerMode === 'trackpad' && !reconnecting ? (
@@ -257,9 +495,11 @@ export function Viewer() {
         }
       </VideoStage>
 
-      {/* Moving over the bars themselves keeps them up, so a mouse reaching
-          for a button is not raced by the auto-hide. */}
-      <div className={styles.chrome} onPointerMove={wake}>
+      {/* Resting on the bars keeps them up, so a mouse reaching for a button
+          is not raced by the auto-hide; the countdown starts on the way off.
+          pointerover/out bubble (enter/leave do not), and the container is
+          pointer-events: none, so only the bars and cards themselves count. */}
+      <div className={styles.chrome} onPointerOver={hold} onPointerOut={wake}>
         {reconnecting ? (
           <ReconnectOverlay onEnd={() => client.end()} />
         ) : (
@@ -275,12 +515,37 @@ export function Viewer() {
 
             <ViewerBottomBar
               active={overlay}
+              fullscreen={fullscreen}
               visible={visible}
               onAction={handleAction}
               onEnd={() => client.end()}
             />
 
-            {state.transport === 'relayed' && overlay === null && visible ? (
+            {keyNotice === 'reserved' && overlay === null ? (
+              <ViewerBanner>
+                <Banner
+                  tone="info"
+                  icon="keyboard"
+                  title="Some shortcuts stay with the browser"
+                  action={{ label: 'Dismiss', onClick: () => setKeyNotice(null) }}
+                >
+                  {reservedShortcutLabels(platform).join(', ')} act on this browser, not on{' '}
+                  {deviceName}. Use the on-screen modifier keys to send those.
+                </Banner>
+              </ViewerBanner>
+            ) : keyNotice === 'escaped' && overlay === null ? (
+              <ViewerBanner>
+                <Banner
+                  tone="warn"
+                  icon="keyboard"
+                  title="That shortcut went to the browser"
+                  action={{ label: 'Dismiss', onClick: () => setKeyNotice(null) }}
+                >
+                  The window lost focus while a modifier was held, so the browser took the chord.
+                  Every key was released on {deviceName}.
+                </Banner>
+              </ViewerBanner>
+            ) : state.transport === 'relayed' && overlay === null && visible ? (
               <ViewerBanner>
                 <Banner tone="warn" title="Relayed connection">
                   No direct path to {deviceName}, so media is going
@@ -310,7 +575,20 @@ export function Viewer() {
             ) : null}
 
             {overlay === 'keyboard' ? (
-              <ModifierBar latched={latched} onToggle={toggleLatch} onKey={sendKey} />
+              <ModifierBar
+                latched={latched}
+                onToggle={toggleLatch}
+                onKey={sendKey}
+                keyboardInset={keyboardInset}
+              >
+                {softKeyboard ? (
+                  <SoftKeyboard
+                    ref={softKeyboardRef}
+                    onIntent={handleComposerIntent}
+                    onDismiss={handleComposerDismiss}
+                  />
+                ) : null}
+              </ModifierBar>
             ) : null}
 
             {overlay === 'quality' ? (

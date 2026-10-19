@@ -51,11 +51,14 @@ export function ViewerTopBar({
 
 export function ViewerBottomBar({
   active,
+  fullscreen = false,
   visible,
   onAction,
   onEnd,
 }: {
   active: ViewerAction | null
+  /** The fullscreen control is a toggle, so it has to show which way it goes. */
+  fullscreen?: boolean
   visible: boolean
   onAction: (action: ViewerAction) => void
   onEnd: () => void
@@ -63,15 +66,18 @@ export function ViewerBottomBar({
   return (
     <div className={cn(styles.bar, styles.bottom, !visible && styles.hidden)}>
       <div className={styles.controls}>
-        {VIEWER_ACTIONS.map((action) => (
-          <IconButton
-            key={action.id}
-            icon={action.icon}
-            label={action.label}
-            appearance={active === action.id ? 'active' : 'ghost'}
-            onClick={() => onAction(action.id)}
-          />
-        ))}
+        {VIEWER_ACTIONS.map((action) => {
+          const isFullscreen = action.id === 'fullscreen' && fullscreen
+          return (
+            <IconButton
+              key={action.id}
+              icon={isFullscreen ? 'fullscreen-exit' : action.icon}
+              label={isFullscreen ? 'Exit full screen' : action.label}
+              appearance={active === action.id || isFullscreen ? 'active' : 'ghost'}
+              onClick={() => onAction(action.id)}
+            />
+          )
+        })}
       </div>
       <IconButton icon="power" label="End session" appearance="danger" onClick={onEnd} />
     </div>

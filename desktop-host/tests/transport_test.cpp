@@ -3,11 +3,17 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <map>
+#include <vector>
+#include <memory>
 #include <set>
 #include <string>
 
+#include <rtc/rtc.hpp>
+
 #include "desktophost/encode/encoded_frame.h"
 #include "desktophost/transport/mdns_candidate.h"
+#include "desktophost/input/input_protocol.h"
 #include "desktophost/transport/peer_connection.h"
 
 using namespace desktophost;
@@ -155,6 +161,112 @@ TEST_CASE("input can be left out of the offer entirely", "[transport]") {
 
     CHECK(sdp.find("m=application") == std::string::npos);
     CHECK(sdp.find("m=video") != std::string::npos);
+}
+
+// The keyboard/pointer split, checked from the far side of a real connection:
+// a loopback viewer answers the host's offer and reports what it was given.
+// Keys must arrive ordered and reliable (typing needs every keystroke, in
+// order); pointer input must stay unordered with no retransmits (a resent
+// coordinate is already wrong). One channel cannot be both, and a mistake in
+// either direction is invisible until someone types "teh" or the cursor lags
+// behind a retransmit.
+TEST_CASE("keys ride their own ordered, reliable channel; pointer stays unordered and lossy",
+          "[transport]") {
+    PeerConnectionConfig config = offlineConfig();
+    config.keyChannelHello = encodeHostInfo(HostPlatform::mac);
+    auto host = makePeerConnection(config);
+    REQUIRE(host != nullptr);
+
+    auto viewer = std::make_shared<rtc::PeerConnection>(rtc::Configuration{});
+
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::map<std::string, rtc::Reliability> offered;
+    std::vector<std::shared_ptr<rtc::DataChannel>> keepAlive;
+    std::string keyMessage;
+    std::vector<std::string> viewerReceived;
+
+    viewer->onLocalDescription([&](rtc::Description answer) {
+        host->setRemoteDescription(std::string(answer), answer.typeString());
+    });
+    viewer->onLocalCandidate([&](rtc::Candidate candidate) {
+        host->addRemoteCandidate(candidate.candidate(), candidate.mid());
+    });
+    viewer->onDataChannel([&](std::shared_ptr<rtc::DataChannel> channel) {
+        if (channel->label() == "keys") {
+            std::weak_ptr<rtc::DataChannel> weak = channel;
+            channel->onOpen([weak] {
+                if (auto open = weak.lock()) {
+                    open->send(std::string(R"({"type":"keyDown","code":"KeyA","t":1})"));
+                }
+            });
+            channel->onMessage([&](rtc::message_variant message) {
+                if (const auto* text = std::get_if<std::string>(&message)) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    viewerReceived.push_back(*text);
+                }
+                changed.notify_all();
+            });
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            offered[channel->label()] = channel->reliability();
+            keepAlive.push_back(channel);
+        }
+        changed.notify_all();
+    });
+
+    PeerConnectionCallbacks callbacks;
+    callbacks.onLocalDescription = [&](const std::string& sdp, const std::string& type) {
+        viewer->setRemoteDescription(rtc::Description(sdp, type));
+    };
+    callbacks.onLocalCandidate = [&](const std::string& candidate, const std::string& mid) {
+        viewer->addRemoteCandidate(rtc::Candidate(candidate, mid));
+    };
+    callbacks.onKeyMessage = [&](std::string message) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            keyMessage = std::move(message);
+        }
+        changed.notify_all();
+    };
+
+    const Status status = host->start(std::move(callbacks));
+    INFO(status.message());
+    REQUIRE(static_cast<bool>(status));
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        REQUIRE(changed.wait_for(lock, std::chrono::seconds(10), [&] {
+            return offered.size() == 2 && !keyMessage.empty() && !viewerReceived.empty();
+        }));
+
+        REQUIRE(offered.count("keys") == 1);
+        const rtc::Reliability& keys = offered["keys"];
+        CHECK_FALSE(keys.unordered);
+        CHECK_FALSE(keys.maxRetransmits.has_value());
+        CHECK_FALSE(keys.maxPacketLifeTime.has_value());
+
+        REQUIRE(offered.count("input") == 1);
+        const rtc::Reliability& input = offered["input"];
+        CHECK(input.unordered);
+        REQUIRE(input.maxRetransmits.has_value());
+        CHECK(*input.maxRetransmits == 0u);
+
+        // And a key sent by the viewer comes out of the keys callback.
+        CHECK(keyMessage == R"({"type":"keyDown","code":"KeyA","t":1})");
+
+        // The host's hello is the first thing the viewer sees on the keys
+        // channel: the one desktop -> phone message on an input channel, sent
+        // on open so it beats any keystroke the phone could send.
+        REQUIRE(viewerReceived.size() == 1);
+        CHECK(viewerReceived.front() == R"({"platform":"mac","type":"hostInfo"})");
+    }
+
+    host->close();
+    viewer->close();
+    std::lock_guard<std::mutex> lock(mutex);
+    keepAlive.clear();
 }
 
 // Frames arrive from the encoder as soon as capture starts, which is long

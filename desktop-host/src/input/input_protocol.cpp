@@ -45,7 +45,190 @@ std::optional<int64_t> integer(const Json& parent, const char* key) {
     return it->get<int64_t>();
 }
 
+/// A DOM `code` is ASCII letters and digits ("KeyA", "Numpad7", "F12"). The
+/// bound keeps a hostile peer from handing us an arbitrary string to look up.
+bool plausibleCode(const std::string& code) {
+    if (code.empty() || code.size() > 32) {
+        return false;
+    }
+    for (const char c : code) {
+        const bool alnum = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (!alnum) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
+
+std::optional<KeyMessage> parseKeyMessage(std::string_view json) {
+    const Json doc = Json::parse(json, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) {
+        return std::nullopt;
+    }
+
+    const auto typeIt = doc.find("type");
+    if (typeIt == doc.end() || !typeIt->is_string()) {
+        return std::nullopt;
+    }
+    const std::string type = typeIt->get<std::string>();
+    if (type != "keyDown" && type != "keyUp") {
+        return std::nullopt;
+    }
+
+    const auto codeIt = doc.find("code");
+    if (codeIt == doc.end() || !codeIt->is_string()) {
+        return std::nullopt;
+    }
+    std::string code = codeIt->get<std::string>();
+    if (!plausibleCode(code)) {
+        return std::nullopt;
+    }
+
+    KeyMessage message;
+    message.down = type == "keyDown";
+    message.code = std::move(code);
+    message.sentAtMs = integer(doc, "t").value_or(0);
+    // Absent is a first press. Present must be a boolean: a sender that writes
+    // "true" as a string is not ours.
+    if (const auto repeatIt = doc.find("repeat"); repeatIt != doc.end()) {
+        if (!repeatIt->is_boolean()) {
+            return std::nullopt;
+        }
+        message.repeat = repeatIt->get<bool>();
+    }
+    return message;
+}
+
+std::optional<std::u16string> utf8ToUtf16(std::string_view utf8) {
+    std::u16string out;
+    out.reserve(utf8.size());
+    size_t i = 0;
+    while (i < utf8.size()) {
+        const auto lead = static_cast<unsigned char>(utf8[i]);
+        uint32_t codePoint = 0;
+        size_t length = 0;
+        uint32_t minimum = 0;
+        if (lead < 0x80) {
+            codePoint = lead;
+            length = 1;
+        } else if ((lead & 0xE0) == 0xC0) {
+            codePoint = lead & 0x1F;
+            length = 2;
+            minimum = 0x80;
+        } else if ((lead & 0xF0) == 0xE0) {
+            codePoint = lead & 0x0F;
+            length = 3;
+            minimum = 0x800;
+        } else if ((lead & 0xF8) == 0xF0) {
+            codePoint = lead & 0x07;
+            length = 4;
+            minimum = 0x10000;
+        } else {
+            return std::nullopt;
+        }
+        if (i + length > utf8.size()) {
+            return std::nullopt;
+        }
+        for (size_t k = 1; k < length; ++k) {
+            const auto trail = static_cast<unsigned char>(utf8[i + k]);
+            if ((trail & 0xC0) != 0x80) {
+                return std::nullopt;
+            }
+            codePoint = (codePoint << 6) | (trail & 0x3F);
+        }
+        // Overlong encodings, UTF-16 surrogates spelled in UTF-8, and anything
+        // past the last plane are all things no real encoder produces.
+        if (codePoint < minimum || codePoint > 0x10FFFF ||
+            (codePoint >= 0xD800 && codePoint <= 0xDFFF)) {
+            return std::nullopt;
+        }
+        if (codePoint >= 0x10000) {
+            codePoint -= 0x10000;
+            out.push_back(static_cast<char16_t>(0xD800 + (codePoint >> 10)));
+            out.push_back(static_cast<char16_t>(0xDC00 + (codePoint & 0x3FF)));
+        } else {
+            out.push_back(static_cast<char16_t>(codePoint));
+        }
+        i += length;
+    }
+    return out;
+}
+
+std::optional<TextMessage> parseTextMessage(std::string_view json) {
+    const Json doc = Json::parse(json, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) {
+        return std::nullopt;
+    }
+
+    const auto typeIt = doc.find("type");
+    if (typeIt == doc.end() || !typeIt->is_string() || typeIt->get<std::string>() != "text") {
+        return std::nullopt;
+    }
+
+    const auto textIt = doc.find("text");
+    if (textIt == doc.end() || !textIt->is_string()) {
+        return std::nullopt;
+    }
+    const std::string& utf8 = textIt->get_ref<const std::string&>();
+    // Four bytes per code point is the most UTF-8 spends, so this is a cheap
+    // refusal before decoding anything a hostile peer sized to hurt.
+    if (utf8.empty() || utf8.size() > kMaxTextCodePoints * 4) {
+        return std::nullopt;
+    }
+    for (const char c : utf8) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte < 0x20 || byte == 0x7F) {
+            // A newline or tab here is a sender that did not turn it into
+            // the key event the schema requires. Not ours.
+            return std::nullopt;
+        }
+    }
+    auto decoded = utf8ToUtf16(utf8);
+    if (!decoded) {
+        return std::nullopt;
+    }
+    size_t codePoints = 0;
+    for (const char16_t unit : *decoded) {
+        // Count the pair once, on its lead unit.
+        if (unit < 0xDC00 || unit > 0xDFFF) ++codePoints;
+    }
+    if (codePoints > kMaxTextCodePoints) {
+        return std::nullopt;
+    }
+
+    TextMessage message;
+    message.text = std::move(*decoded);
+    message.sentAtMs = integer(doc, "t").value_or(0);
+    return message;
+}
+
+HostPlatform currentHostPlatform() {
+#if defined(_WIN32)
+    return HostPlatform::windows;
+#elif defined(__APPLE__)
+    return HostPlatform::mac;
+#else
+    return HostPlatform::linux;
+#endif
+}
+
+std::string_view hostPlatformName(HostPlatform platform) {
+    switch (platform) {
+    case HostPlatform::windows:
+        return "windows";
+    case HostPlatform::mac:
+        return "mac";
+    case HostPlatform::linux:
+        return "linux";
+    }
+    return "linux";
+}
+
+std::string encodeHostInfo(HostPlatform platform) {
+    return Json{{"type", "hostInfo"}, {"platform", std::string(hostPlatformName(platform))}}.dump();
+}
 
 std::optional<PointerMessage> parsePointerMessage(std::string_view json) {
     // Non-throwing parse: a malformed message from a remote peer is an

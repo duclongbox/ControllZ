@@ -68,6 +68,61 @@
   .navLinks .navLink { display: none; }
 }
 
+/* The "Get started" menu: two ways in, anchored under the nav button. */
+.menuWrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--space-sm));
+  right: 0;
+  z-index: 20;
+  width: min(340px, calc(100vw - 2 * var(--gutter)));
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+  animation: menuRise 140ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.menuItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  text-align: left;
+}
+
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: var(--color-bg-surface);
+}
+
+.menuTitle {
+  font-size: var(--type-size-base);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-text-primary);
+}
+
+@keyframes menuRise {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu { animation: none; }
+}
+
 .hero {
   padding: clamp(48px, 7vw, 96px) var(--gutter);
   display: flex;

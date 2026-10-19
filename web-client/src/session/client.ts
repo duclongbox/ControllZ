@@ -1,4 +1,4 @@
-import type { PointerIntent } from '../protocol/input'
+import type { KeyIntent, PointerIntent } from '../protocol/input'
 import type { QualityPriority, SessionState } from './types'
 
 /**
@@ -47,8 +47,20 @@ export interface SessionClient {
    */
   sendPointer(intent: PointerIntent): void
 
-  /** M2: a physical key, never a character — layouts differ per OS. */
-  sendKey(kind: 'down' | 'up', code: string, modifiers: readonly string[]): void
+  /**
+   * One physical key, never a character — layouts differ per OS, and the
+   * desktop's own layout decides what the position types. Goes on the ordered,
+   * reliable `keys` channel: typing needs every keystroke, in order.
+   */
+  sendKey(intent: KeyIntent): void
+
+  /**
+   * A run of characters from the on-screen keyboard — the one thing that is
+   * sent as characters, because a soft keyboard has no positions. Same
+   * channel as the keys, so it stays in order with the Backspaces and Enters
+   * around it. At most MAX_TEXT_LENGTH per call; the composer splits.
+   */
+  sendText(text: string): void
 
   /** M5: network changed under us; restart ICE without tearing down the stage. */
   restartIce(): void

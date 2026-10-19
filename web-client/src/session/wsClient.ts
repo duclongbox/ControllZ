@@ -1,5 +1,5 @@
-import { encodePointerMessage } from '../protocol/input'
-import type { PointerIntent } from '../protocol/input'
+import { encodeKeyMessage, encodePointerMessage, encodeTextMessage, parseHostInfo } from '../protocol/input'
+import type { KeyIntent, PointerIntent } from '../protocol/input'
 import type { RejectReason } from '../protocol/types'
 import type { SessionClient } from './client'
 import type { ConnectStep, QualityPriority, SessionState, SessionStats } from './types'
@@ -172,6 +172,9 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   let attempt = 0
   // The input channel, its sequence stream, and the one move waiting for the
   // next frame. See sendPointer().
+  // The keyboard's own channel — ordered and reliable, where `input` is
+  // neither. See shared/schemas/input/catalog.json `channels`.
+  let keyChannel: RTCDataChannel | null = null
   let inputChannel: RTCDataChannel | null = null
   let inputSeq = 0
   let pendingMove: PointerIntent | null = null
@@ -385,11 +388,15 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     // answerer cannot add an m-line the offer did not carry. So this side waits
     // for it rather than calling createDataChannel().
     connection.ondatachannel = (event) => {
-      if (event.channel.label !== 'input') {
-        event.channel.close()
+      if (event.channel.label === 'input') {
+        attachInputChannel(event.channel)
         return
       }
-      attachInputChannel(event.channel)
+      if (event.channel.label === 'keys') {
+        attachKeyChannel(event.channel)
+        return
+      }
+      event.channel.close()
     }
 
     // The whole point of the exercise: the desktop's video track arrives here.
@@ -429,6 +436,19 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
 
     channel.onclose = () => {
       if (inputChannel === channel) inputChannel = null
+    }
+  }
+
+  function attachKeyChannel(channel: RTCDataChannel) {
+    keyChannel = channel
+    // The one thing the desktop says on this channel: which OS it is, sent as
+    // the channel opens. Anything else arriving here is not ours and is dropped.
+    channel.onmessage = (event) => {
+      const platform = parseHostInfo(event.data)
+      if (platform) patch({ hostPlatform: platform })
+    }
+    channel.onclose = () => {
+      if (keyChannel === channel) keyChannel = null
     }
   }
 
@@ -507,7 +527,12 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
       inputChannel.onclose = null
       inputChannel = null
     }
+    if (keyChannel) {
+      keyChannel.onclose = null
+      keyChannel = null
+    }
     pendingMove = null
+    pendingScroll = null
     moveScheduled = false
     pendingCandidates = []
     if (pc) {
@@ -697,8 +722,27 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
       scheduleFlush()
     },
 
-    sendKey(_kind: 'down' | 'up', _code: string, _modifiers: readonly string[]) {
-      // M2, as above.
+    sendKey(intent: KeyIntent) {
+      // Never coalesced and never dropped on this side: the channel delivers
+      // every keystroke in order, and a keystroke skipped here would be a
+      // letter missing from what the user typed.
+      if (!keyChannel || keyChannel.readyState !== 'open') return
+      try {
+        keyChannel.send(encodeKeyMessage(intent, Date.now()))
+      } catch {
+        // Closed between the check and the send. The host releases every held
+        // key when the channel closes, so nothing is left stuck.
+      }
+    },
+
+    sendText(text: string) {
+      // Same rules as a key: in order, never coalesced, never dropped here.
+      if (!keyChannel || keyChannel.readyState !== 'open') return
+      try {
+        keyChannel.send(encodeTextMessage(text, Date.now()))
+      } catch {
+        // Closed between the check and the send; nothing is held by text.
+      }
     },
 
     restartIce() {

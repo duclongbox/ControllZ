@@ -1,3 +1,4 @@
+import type { HostPlatform } from '../protocol/input'
 import type { RejectReason } from '../protocol/types'
 
 /**
@@ -33,6 +34,15 @@ export type QualityPriority = (typeof QUALITY_PRIORITIES)[number]
 /** Pointer interaction model on the stage. */
 export const POINTER_MODES = ['trackpad', 'direct'] as const
 export type PointerMode = (typeof POINTER_MODES)[number]
+
+/**
+ * Whether Command and Control trade places on the way to the desktop.
+ * `auto` swaps exactly when one side is a Mac and the other is not — which is
+ * when Cmd+C typed on a Mac would otherwise land as Win+C. See
+ * viewer/shortcutTranslation.ts.
+ */
+export const SHORTCUT_MODIFIER_MODES = ['auto', 'swap', 'off'] as const
+export type ShortcutModifiers = (typeof SHORTCUT_MODIFIER_MODES)[number]
 
 /** One rung of the connecting ladder. Every step names what it is waiting on. */
 export interface ConnectStep {
@@ -102,6 +112,12 @@ export interface SessionState {
   device: Device | null
   activeDisplayId: string | null
   qualityPriority: QualityPriority
+  /**
+   * The desktop's OS, once it has said (`hostInfo` on the keys channel). Null
+   * until then, and for a host too old to say — in which case no shortcut
+   * modifier is translated.
+   */
+  hostPlatform: HostPlatform | null
 }
 
 export function initialSessionState(): SessionState {
@@ -117,6 +133,7 @@ export function initialSessionState(): SessionState {
     device: null,
     activeDisplayId: null,
     qualityPriority: 'auto',
+    hostPlatform: null,
   }
 }
 

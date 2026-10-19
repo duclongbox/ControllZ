@@ -6,7 +6,9 @@
 #include <windows.h>
 
 #include <cmath>
+#include <vector>
 
+#include "desktophost/input/key_codes.h"
 #include "desktophost/input/pointer_mapping.h"
 #include "platform/win/d3d_device.h"
 
@@ -137,6 +139,63 @@ public:
         }
         if (count > 0) {
             SendInput(count, inputs, sizeof(INPUT));
+        }
+    }
+
+    // Windows keeps one keyboard state for the whole session, and SendInput
+    // feeds it like a real keyboard would: a synthesised Shift really is held,
+    // so later keys and clicks pick it up with nothing tracked here. Autorepeat
+    // is just another key-down, which is exactly what a real keyboard sends.
+    // CapsLock toggles on its own press, so it needs no special case either.
+    bool key(std::string_view code, bool down, bool repeat) override {
+        (void)repeat;
+        // Not `key`: MSVC /W4 warns when a local hides the member function.
+        const auto mapped = windowsKeyFor(code);
+        if (!mapped) {
+            return false;
+        }
+
+        INPUT input{};
+        input.type = INPUT_KEYBOARD;
+        if (mapped->virtualKey != 0) {
+            input.ki.wVk = mapped->virtualKey;
+        } else {
+            // By scan code, so the *host's* layout turns the position into a
+            // character — the same rule the Mac backend follows.
+            input.ki.wScan = mapped->scanCode;
+            input.ki.dwFlags = KEYEVENTF_SCANCODE;
+        }
+        if (mapped->extended) {
+            input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+        }
+        if (!down) {
+            input.ki.dwFlags |= KEYEVENTF_KEYUP;
+        }
+        // Zero means UIPI dropped it (the foreground window is elevated, or
+        // it is the secure desktop). Nothing to retry; the key is still
+        // "handled" from the router's point of view.
+        SendInput(1, &input, sizeof(INPUT));
+        return true;
+    }
+
+    void text(std::u16string_view utf16) override {
+        // KEYEVENTF_UNICODE types one UTF-16 unit per press, straight past
+        // the layout. A surrogate pair goes as two consecutive presses, which
+        // is how Windows expects an astral character to arrive. One SendInput
+        // call for the run, so no other input lands in the middle of a word.
+        std::vector<INPUT> inputs;
+        inputs.reserve(utf16.size() * 2);
+        for (const char16_t unit : utf16) {
+            for (const bool down : {true, false}) {
+                INPUT input{};
+                input.type = INPUT_KEYBOARD;
+                input.ki.wScan = unit;
+                input.ki.dwFlags = KEYEVENTF_UNICODE | (down ? 0 : KEYEVENTF_KEYUP);
+                inputs.push_back(input);
+            }
+        }
+        if (!inputs.empty()) {
+            SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
         }
     }
 

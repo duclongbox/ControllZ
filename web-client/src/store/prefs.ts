@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import type { PointerMode, QualityPriority } from '../session/types'
+import type { PointerMode, QualityPriority, ShortcutModifiers } from '../session/types'
+import { SHORTCUT_MODIFIER_MODES } from '../session/types'
 
 /* Local preferences.
  *
@@ -25,6 +26,12 @@ export interface Prefs {
   pointerMode: PointerMode
   /** Remembered so the viewer's control opens where the user left it. */
   qualityPriority: QualityPriority
+  /**
+   * Cmd ⇄ Ctrl on the way to the desktop. Default `auto`: swap when exactly
+   * one side is a Mac. Phone-side, like everything here — the desktop maps
+   * keys by position and never remaps.
+   */
+  shortcutModifiers: ShortcutModifiers
 }
 
 export const HIDE_DELAYS = [
@@ -41,6 +48,7 @@ const DEFAULTS: Prefs = {
   hideChromeAfterMs: 3000,
   pointerMode: 'trackpad',
   qualityPriority: 'auto',
+  shortcutModifiers: 'auto',
 }
 
 const listeners = new Set<() => void>()
@@ -75,6 +83,11 @@ function read(): Prefs {
       partial.qualityPriority === 'auto'
         ? partial.qualityPriority
         : DEFAULTS.qualityPriority,
+    shortcutModifiers: (SHORTCUT_MODIFIER_MODES as readonly unknown[]).includes(
+      partial.shortcutModifiers,
+    )
+      ? (partial.shortcutModifiers as ShortcutModifiers)
+      : DEFAULTS.shortcutModifiers,
   }
 }
 

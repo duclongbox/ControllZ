@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://remotehost.dev/schemas/input/catalog.json",
   "title": "Input message catalog (data plane)",
-  "description": "Messages carried on the WebRTC input DataChannel, phone -> desktop only. DELIBERATELY SEPARATE from ../catalog.json: that one is the signaling control plane and mirrors the sealed SignalingMessage hierarchy in signaling-server, which never sees these. Adding an input type there would claim a parity the server does not have, and would suggest input bytes pass through our servers. They do not (CLAUDE.md architecture invariants).",
+  "description": "Messages carried on the WebRTC input DataChannels (`input` and `keys`, see `channels`). Phone -> desktop, with one exception: `hostInfo`, which the desktop sends to the phone once when the `keys` channel opens. DELIBERATELY SEPARATE from ../catalog.json: that one is the signaling control plane and mirrors the sealed SignalingMessage hierarchy in signaling-server, which never sees these. Adding an input type there would claim a parity the server does not have, and would suggest input bytes pass through our servers. They do not (CLAUDE.md architecture invariants).",
   "transport": {
     "channel": "input",
     "ordered": false,
@@ -10,13 +10,34 @@
     "createdBy": "desktop-host",
     "note": "The desktop is the offerer, and an answerer cannot add an m-line the offer lacks, so the host creates the channel before setLocalDescription() and the phone receives it via ondatachannel. No signaling message is involved: the channel is negotiated inside the existing SDP exchange."
   },
+  "channels": [
+    {
+      "channel": "input",
+      "ordered": false,
+      "maxRetransmits": 0,
+      "carries": ["pointerMove", "pointerDown", "pointerUp", "scroll"],
+      "why": "Pointer samples are absolute and superseded by the next one. A retransmitted coordinate is already wrong, and ordered delivery would stall every sample behind a lost one."
+    },
+    {
+      "channel": "keys",
+      "ordered": true,
+      "reliable": true,
+      "carries": ["keyDown", "keyUp", "text", "hostInfo"],
+      "why": "Typing needs every keystroke exactly once and in order. A separate channel, not a mode of `input`: on one reliable channel pointer retransmits would head-of-line block keystrokes, and on one unreliable channel keys would be lost and reordered. Two channels are two SCTP streams, so a lost key stalls only the keys behind it. Created by desktop-host alongside `input`, before the offer, for the same reason."
+    }
+  ],
   "messages": [
     { "type": "pointerMove", "direction": "phoneToDesktop", "schema": "pointerMove.schema.json" },
     { "type": "pointerDown", "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" },
     { "type": "pointerUp",   "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" },
-    { "type": "scroll",      "direction": "phoneToDesktop", "schema": "scroll.schema.json" }
+    { "type": "scroll",      "direction": "phoneToDesktop", "schema": "scroll.schema.json" },
+    { "type": "keyDown",     "direction": "phoneToDesktop", "schema": "key.schema.json", "channel": "keys" },
+    { "type": "keyUp",       "direction": "phoneToDesktop", "schema": "key.schema.json", "channel": "keys" },
+    { "type": "text",        "direction": "phoneToDesktop", "schema": "text.schema.json", "channel": "keys" },
+    { "type": "hostInfo",    "direction": "desktopToPhone", "schema": "hostInfo.schema.json", "channel": "keys" }
   ],
   "deferred": [
-    { "type": "keyDown/keyUp", "milestone": "M2 follow-up", "note": "KeyboardEvent.code -> CGKeyCode table" }
+    { "type": "soft-keyboard modifier chords", "milestone": "keyboard follow-up", "note": "Ctrl/Cmd/Alt applied to characters typed on the phone's on-screen keyboard. `text` carries characters with no modifier state, and the host types them with no flags; the on-screen modifier bar's latched modifiers wrap only the bar's own keys. Chording a soft-keyboard letter would need the phone to turn the character back into a position (impossible in general: the host's layout is what maps positions to characters) or a `text` field for modifiers that the host applies as flags." },
+    { "type": "reserved shortcut capture", "milestone": "keyboard follow-up", "note": "Capturing browser- and OS-reserved combos (Ctrl+W, Ctrl+T, Alt+Tab, Win key) with the Keyboard Lock API in fullscreen, so they reach the desktop instead of the browser. Until then the phone warns (beforeunload, an in-viewer banner) and the on-screen modifier keys are the way to send them. Ctrl <-> Command translation is DONE: the phone does it from `hostInfo`." }
   ]
 }

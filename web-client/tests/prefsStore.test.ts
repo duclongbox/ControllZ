@@ -11,6 +11,16 @@ describe('prefs store', () => {
     expect(getPrefs().hideChromeAfterMs).toBe(3000)
   })
 
+  it('defaults shortcut modifiers to automatic and keeps only known modes', () => {
+    expect(getPrefs().shortcutModifiers).toBe('auto')
+    setPref('shortcutModifiers', 'swap')
+    expect(getPrefs().shortcutModifiers).toBe('swap')
+
+    localStorage.setItem('remotehost.prefs', JSON.stringify({ shortcutModifiers: 'sometimes' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: 'remotehost.prefs' }))
+    expect(getPrefs().shortcutModifiers).toBe('auto')
+  })
+
   it('writes a change through to storage', () => {
     setPref('haptics', false)
     expect(JSON.parse(localStorage.getItem('remotehost.prefs') ?? '{}').haptics).toBe(false)

@@ -17,7 +17,9 @@
 #include "desktophost/capture/test_pattern_capturer.h"
 #include "desktophost/encode/video_encoder.h"
 #include "desktophost/input/input_injector.h"
+#include "desktophost/input/input_protocol.h"
 #include "desktophost/input/input_router.h"
+#include "desktophost/input/keyboard_router.h"
 #include "desktophost/signaling/signaling_client.h"
 #include "desktophost/transport/mdns_candidate.h"
 #include "desktophost/transport/peer_connection.h"
@@ -105,7 +107,7 @@ void printUsage() {
         "  --stun <urls>       comma-separated STUN servers, or 'none' for host\n"
         "                      candidates only (default: Cloudflare, Google and\n"
         "                      Twilio on port 3478)\n"
-        "  --no-input          stream only; refuse pointer control from the phone\n"
+        "  --no-input          stream only; refuse pointer and keyboard control\n"
         "  --record <path>     output file (default: capture.h264)\n"
         "  --seconds <n>       recording duration (default: 10)\n"
         "  --fps <n>           frame rate ceiling (default: 60)\n"
@@ -348,6 +350,9 @@ struct Session {
     std::unique_ptr<desktophost::IPeerConnection> peer;
     std::unique_ptr<desktophost::IInputInjector> injector;
     std::unique_ptr<desktophost::InputRouter> router;
+    // Same injector, separate router: keys arrive on their own ordered,
+    // reliable channel and need none of the pointer router's repair logic.
+    std::unique_ptr<desktophost::KeyboardRouter> keyboard;
 
     // Published only once each stage is running; the capture and encoder
     // threads read these rather than the unique_ptrs, which the session
@@ -357,6 +362,7 @@ struct Session {
     // Read by libdatachannel's thread on every input message and by the main
     // loop's deadman tick.
     std::atomic<desktophost::InputRouter*> liveRouter{nullptr};
+    std::atomic<desktophost::KeyboardRouter*> liveKeyboard{nullptr};
 };
 
 void stopSession(const std::shared_ptr<Session>& session) {
@@ -367,10 +373,15 @@ void stopSession(const std::shared_ptr<Session>& session) {
     session->liveEncoder.store(nullptr);
     session->livePeer.store(nullptr);
     session->liveRouter.store(nullptr);
+    session->liveKeyboard.store(nullptr);
 
     // Before the peer connection goes: no pointerUp can arrive after this, so
     // anything still held has to be let go here or the desktop is left with a
-    // stuck mouse button and no way to hear about it.
+    // stuck mouse button and no way to hear about it. Keys first, so a held
+    // Shift is not still down when the button releases.
+    if (session->keyboard) {
+        session->keyboard->releaseAll();
+    }
     if (session->router) {
         session->router->releaseAll();
     }
@@ -416,6 +427,14 @@ int runServe(const Options& options) {
     std::mutex sessionMutex;
     std::shared_ptr<Session> current;
     std::atomic<bool> disconnected{false};
+
+    // Codes expire after five minutes on the server, so the host re-issues
+    // inside that window: a host left running while you find your phone must
+    // still be pairable. Written from the signaling thread (session end) and
+    // the main loop, hence atomic.
+    constexpr auto kCodeRefresh = std::chrono::minutes(4);
+    std::atomic<std::chrono::steady_clock::time_point> nextCodeAt{
+        std::chrono::steady_clock::now() + kCodeRefresh};
 
     // Runs on the signaling thread. Everything the session needs is built
     // here, in dependency order: capture first (it decides the resolution),
@@ -487,6 +506,8 @@ int runServe(const Options& options) {
             } else {
                 session->router = std::make_unique<desktophost::InputRouter>(
                     session->injector.get());
+                session->keyboard = std::make_unique<desktophost::KeyboardRouter>(
+                    session->injector.get());
             }
         }
 
@@ -498,6 +519,10 @@ int runServe(const Options& options) {
         }
         peerConfig.bitrateKbps = options.bitrateBps / 1000;
         peerConfig.enableInputChannel = session->router != nullptr;
+        // Tells the phone which OS it is typing into, so it can swap Cmd and
+        // Ctrl before sending. The host maps by position and never remaps.
+        peerConfig.keyChannelHello =
+            desktophost::encodeHostInfo(desktophost::currentHostPlatform());
 
         session->peer = desktophost::makePeerConnection(peerConfig);
 
@@ -550,6 +575,16 @@ int runServe(const Options& options) {
                 router->releaseAll();
             }
         };
+        peerCallbacks.onKeyMessage = [session](std::string message) {
+            if (auto* keyboard = session->liveKeyboard.load()) {
+                keyboard->handleMessage(message);
+            }
+        };
+        peerCallbacks.onKeyChannelClosed = [session] {
+            if (auto* keyboard = session->liveKeyboard.load()) {
+                keyboard->releaseAll();
+            }
+        };
 
         if (auto status = session->peer->start(std::move(peerCallbacks)); status.failed()) {
             std::fprintf(stderr, "transport failed to start: %s\n", status.message().c_str());
@@ -561,6 +596,7 @@ int runServe(const Options& options) {
         session->livePeer.store(session->peer.get());
         session->liveEncoder.store(session->encoder.get());
         session->liveRouter.store(session->router.get());
+        session->liveKeyboard.store(session->keyboard.get());
 
         std::shared_ptr<Session> previous;
         {
@@ -657,6 +693,13 @@ int runServe(const Options& options) {
             }
         }
         stopSession(session);
+
+        // The code on screen was issued when the last phone paired and has
+        // been ageing through the whole session, so it is usually expired by
+        // now. Re-issue immediately: the next phone to pair must not wait for
+        // the refresh timer.
+        signaling->requestPairCode();
+        nextCodeAt.store(std::chrono::steady_clock::now() + kCodeRefresh);
     };
     callbacks.onError = [](const std::string& code, const std::string& message) {
         std::fprintf(stderr, "signaling error: %s (%s)\n", message.c_str(), code.c_str());
@@ -678,13 +721,7 @@ int runServe(const Options& options) {
     // Always offer a code: pairing is idempotent on the server, and a desktop
     // with no way to show one is a desktop no new phone can ever reach.
     signaling->requestPairCode();
-
-    // Codes expire after five minutes on the server, so refresh inside that
-    // window: a host left running while you find your phone must still be
-    // pairable. Skipped while a session is live — nobody is reading the
-    // terminal then, and the code would go stale again anyway.
-    constexpr auto kCodeRefresh = std::chrono::minutes(4);
-    auto nextCodeAt = std::chrono::steady_clock::now() + kCodeRefresh;
+    nextCodeAt.store(std::chrono::steady_clock::now() + kCodeRefresh);
 
     std::printf("waiting for a paired phone (Ctrl-C to stop)\n");
     while (!g_interrupted.load() && !disconnected.load()) {
@@ -703,19 +740,14 @@ int runServe(const Options& options) {
             }
         }
 
-        if (std::chrono::steady_clock::now() < nextCodeAt) {
+        // Refreshed during a live session too. Issuing a code replaces the
+        // previous one server-side, so this is free, and it is what keeps the
+        // code valid for a second phone the moment the first one leaves.
+        if (std::chrono::steady_clock::now() < nextCodeAt.load()) {
             continue;
         }
-        nextCodeAt = std::chrono::steady_clock::now() + kCodeRefresh;
-
-        bool idle = false;
-        {
-            std::lock_guard<std::mutex> lock(sessionMutex);
-            idle = (current == nullptr);
-        }
-        if (idle) {
-            signaling->requestPairCode();
-        }
+        nextCodeAt.store(std::chrono::steady_clock::now() + kCodeRefresh);
+        signaling->requestPairCode();
     }
 
     std::shared_ptr<Session> session;
