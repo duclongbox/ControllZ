@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 
+#include "desktophost/capture/audio_chunk.h"
 #include "desktophost/capture/platform_frame.h"
 #include "desktophost/status.h"
 
@@ -29,6 +30,14 @@ struct CaptureConfig {
     /// cursor story until input exists — drawing the cursor client-side to
     /// decouple it from video latency is an M2 refinement.
     bool showsCursor = true;
+
+    /// Also capture what the desktop is playing (system audio, not the
+    /// microphone). Delivered through the audio callback given to start(); if
+    /// that callback is null this is a no-op, so recorder mode never pays
+    /// for it. Audio failing to start is reported on stderr and leaves the
+    /// session video-only rather than refusing it: a desktop with no output
+    /// device is still worth seeing.
+    bool captureAudio = false;
 };
 
 /// Invoked on the capture backend's own queue. Must not block: on macOS a slow
@@ -44,9 +53,16 @@ public:
 
     /// Blocks until the platform confirms capture started or refused, so that
     /// permission denial is reported here rather than as silent black frames.
-    virtual Status start(FrameCallback onFrame, CaptureErrorCallback onError) = 0;
+    ///
+    /// `onAudio` is only consulted when CaptureConfig::captureAudio is set. On
+    /// macOS it is served by the same ScreenCaptureKit stream as the frames,
+    /// which is why audio is part of this interface rather than a capturer of
+    /// its own; Windows runs a WASAPI loopback behind the same seam.
+    virtual Status start(FrameCallback onFrame, CaptureErrorCallback onError,
+                         AudioCallback onAudio = nullptr) = 0;
 
-    /// Idempotent. After it returns, no further callbacks are delivered.
+    /// Idempotent. After it returns, no further callbacks — frame or audio —
+    /// are delivered or still running.
     virtual void stop() = 0;
 
     /// Actual capture dimensions, valid once start() has succeeded.

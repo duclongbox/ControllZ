@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "desktophost/encode/audio_encoder.h"
 #include "desktophost/encode/encoded_frame.h"
 #include "desktophost/status.h"
 
@@ -45,6 +46,28 @@ struct PeerConnectionConfig {
     /// Advertised in the SDP as a hint to the receiver. The real rate control
     /// is the encoder's; this does not throttle anything locally.
     int bitrateKbps = 8000;
+
+    /// Offer a send-only Opus audio track alongside the video.
+    ///
+    /// Its own RTP track in the same bundle — never a DataChannel, which
+    /// would put retransmits and ordering in front of a stream whose next
+    /// packet is always a better answer than a resend. Like the video it has
+    /// to be in the offer: the phone is the answerer and cannot add it.
+    bool enableAudio = true;
+
+    /// Dynamic payload type for Opus. 111 is what browsers themselves use,
+    /// which keeps the answer easy to read next to a browser-to-browser SDP.
+    int audioPayloadType = 111;
+
+    /// Advertised as `maxaveragebitrate` in the Opus fmtp line, matching what
+    /// the encoder is configured to produce.
+    int audioBitrateKbps = 128;
+
+    /// Media stream id both tracks are tagged with (`a=msid`). The same id on
+    /// both is what makes the browser deliver them as ONE MediaStream, so the
+    /// phone's video element gets video and audio together instead of two
+    /// streams racing to be the one it plays.
+    std::string mediaStreamId = "desktop";
 
     /// Offer an input DataChannel alongside the video track.
     ///
@@ -116,12 +139,13 @@ struct PeerConnectionCallbacks {
     std::function<void()> onKeyChannelClosed;
 };
 
-/// One WebRTC session to one viewer: send-only video out, input messages in.
+/// One WebRTC session to one viewer: send-only video and audio out, input
+/// messages in.
 class IPeerConnection {
 public:
     virtual ~IPeerConnection() = default;
 
-    /// Adds the video track and generates the offer. `onLocalDescription`
+    /// Adds the media tracks and generates the offer. `onLocalDescription`
     /// fires before this returns or shortly after.
     virtual Status start(PeerConnectionCallbacks callbacks) = 0;
 
@@ -134,6 +158,10 @@ public:
     /// before the track opens are dropped rather than queued: this is live
     /// video, and a backlog delivered late is worse than a gap.
     virtual void sendFrame(const EncodedFrame& frame) = 0;
+
+    /// One Opus packet onto the audio track. Same drop-don't-queue rule as
+    /// sendFrame, and a no-op when audio was not offered.
+    virtual void sendAudio(const EncodedAudioFrame& frame) = 0;
 
     virtual void close() = 0;
 };

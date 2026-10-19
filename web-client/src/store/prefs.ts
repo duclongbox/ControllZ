@@ -20,6 +20,12 @@ export interface Prefs {
   showStats: boolean
   /** A short vibration when a tap is sent. */
   haptics: boolean
+  /**
+   * Play the desktop's audio. Off mutes the video element; the track still
+   * arrives, so switching back on is instant. Phone-side only: the desktop
+   * keeps sending either way, and a per-session "stop sending" is deferred.
+   */
+  sound: boolean
   /** Viewer chrome auto-hide delay, ms. 0 keeps it up. */
   hideChromeAfterMs: number
   /** Default pointer model for new sessions. */
@@ -45,6 +51,7 @@ const DEFAULTS: Prefs = {
   wakeLock: true,
   showStats: false,
   haptics: true,
+  sound: true,
   hideChromeAfterMs: 3000,
   pointerMode: 'trackpad',
   qualityPriority: 'auto',
@@ -70,6 +77,7 @@ function read(): Prefs {
     wakeLock: typeof partial.wakeLock === 'boolean' ? partial.wakeLock : DEFAULTS.wakeLock,
     showStats: typeof partial.showStats === 'boolean' ? partial.showStats : DEFAULTS.showStats,
     haptics: typeof partial.haptics === 'boolean' ? partial.haptics : DEFAULTS.haptics,
+    sound: typeof partial.sound === 'boolean' ? partial.sound : DEFAULTS.sound,
     hideChromeAfterMs: HIDE_DELAYS.some((d) => d.value === partial.hideChromeAfterMs)
       ? (partial.hideChromeAfterMs as number)
       : DEFAULTS.hideChromeAfterMs,

@@ -15,6 +15,7 @@
 
 #include "desktophost/capture/screen_capturer.h"
 #include "desktophost/capture/test_pattern_capturer.h"
+#include "desktophost/encode/audio_encoder.h"
 #include "desktophost/encode/video_encoder.h"
 #include "desktophost/input/input_injector.h"
 #include "desktophost/input/input_protocol.h"
@@ -53,6 +54,10 @@ struct Options {
     // against a server nobody meant to use.
     std::string stunUrl;
     bool input = true;
+    // System audio alongside the video. Serve mode only: the recorder writes
+    // a raw H.264 elementary stream, which has nowhere to put audio.
+    bool audio = true;
+    int audioBitrateBps = 128'000;
 };
 
 std::atomic<bool> g_interrupted{false};
@@ -108,6 +113,8 @@ void printUsage() {
         "                      candidates only (default: Cloudflare, Google and\n"
         "                      Twilio on port 3478)\n"
         "  --no-input          stream only; refuse pointer and keyboard control\n"
+        "  --no-audio          do not send the desktop's sound (serve mode)\n"
+        "  --audio-bitrate <bps>  Opus target bitrate (default: 128000)\n"
         "  --record <path>     output file (default: capture.h264)\n"
         "  --seconds <n>       recording duration (default: 10)\n"
         "  --fps <n>           frame rate ceiling (default: 60)\n"
@@ -147,6 +154,11 @@ bool parseArgs(int argc, char** argv, Options* options, bool* shouldExit) {
             options->testPattern = true;
         } else if (std::strcmp(arg, "--no-input") == 0) {
             options->input = false;
+        } else if (std::strcmp(arg, "--no-audio") == 0) {
+            options->audio = false;
+        } else if (std::strcmp(arg, "--audio-bitrate") == 0) {
+            if (!needsValue(i, arg)) return false;
+            options->audioBitrateBps = std::atoi(argv[++i]);
         } else if (std::strcmp(arg, "--serve") == 0) {
             options->serve = true;
         } else if (std::strcmp(arg, "--signaling") == 0) {
@@ -190,8 +202,8 @@ bool parseArgs(int argc, char** argv, Options* options, bool* shouldExit) {
     }
 
     if (options->seconds <= 0 || options->fps <= 0 || options->bitrateBps <= 0 ||
-        options->maxWidth < 2 || options->maxHeight < 2) {
-        std::fprintf(stderr, "seconds, fps, bitrate and dimensions must be positive\n");
+        options->audioBitrateBps <= 0 || options->maxWidth < 2 || options->maxHeight < 2) {
+        std::fprintf(stderr, "seconds, fps, bitrates and dimensions must be positive\n");
         return false;
     }
     return true;
@@ -204,6 +216,9 @@ desktophost::CaptureConfig captureConfigFrom(const Options& options) {
     config.maxHeight = options.maxHeight;
     config.maxFps = options.fps;
     config.showsCursor = options.showsCursor;
+    // Harmless in recorder mode: with no audio callback passed to start() the
+    // capturers leave audio alone.
+    config.captureAudio = options.audio;
     return config;
 }
 
@@ -347,6 +362,9 @@ struct Session {
     std::string id;
     std::unique_ptr<desktophost::IScreenCapturer> capturer;
     std::unique_ptr<desktophost::IVideoEncoder> encoder;
+    // Null when audio is off or could not start; the session is then
+    // video-only and the offer carries no audio m-line.
+    std::unique_ptr<desktophost::IAudioEncoder> audioEncoder;
     std::unique_ptr<desktophost::IPeerConnection> peer;
     std::unique_ptr<desktophost::IInputInjector> injector;
     std::unique_ptr<desktophost::InputRouter> router;
@@ -358,6 +376,7 @@ struct Session {
     // threads read these rather than the unique_ptrs, which the session
     // thread is still assigning.
     std::atomic<desktophost::IVideoEncoder*> liveEncoder{nullptr};
+    std::atomic<desktophost::IAudioEncoder*> liveAudioEncoder{nullptr};
     std::atomic<desktophost::IPeerConnection*> livePeer{nullptr};
     // Read by libdatachannel's thread on every input message and by the main
     // loop's deadman tick.
@@ -371,6 +390,7 @@ void stopSession(const std::shared_ptr<Session>& session) {
     }
     // Unpublish first so in-flight frames stop reaching a closing encoder.
     session->liveEncoder.store(nullptr);
+    session->liveAudioEncoder.store(nullptr);
     session->livePeer.store(nullptr);
     session->liveRouter.store(nullptr);
     session->liveKeyboard.store(nullptr);
@@ -386,11 +406,16 @@ void stopSession(const std::shared_ptr<Session>& session) {
         session->router->releaseAll();
     }
 
+    // Capture first: once it has returned no frame or audio callback is
+    // running, so the encoders can go.
     if (session->capturer) {
         session->capturer->stop();
     }
     if (session->encoder) {
         session->encoder->stop();
+    }
+    if (session->audioEncoder) {
+        session->audioEncoder->stop();
     }
     if (session->peer) {
         session->peer->close();
@@ -450,6 +475,35 @@ int runServe(const Options& options) {
             return;
         }
 
+        // Audio encoder before capture starts, so whether to ask the
+        // capturer for audio at all is known. It is synchronous and needs
+        // nothing from capture, so there is no ordering cost.
+        if (options.audio) {
+            desktophost::AudioEncoderConfig audioConfig;
+            audioConfig.bitrateBps = options.audioBitrateBps;
+            session->audioEncoder = desktophost::makeOpusAudioEncoder(audioConfig);
+            auto audioStatus = session->audioEncoder->start(
+                [session](const desktophost::EncodedAudioFrame& frame) {
+                    if (auto* peer = session->livePeer.load()) {
+                        peer->sendAudio(frame);
+                    }
+                });
+            if (audioStatus.failed()) {
+                std::fprintf(stderr, "audio encoder failed to start, session is video-only: %s\n",
+                             audioStatus.message().c_str());
+                session->audioEncoder.reset();
+            }
+        }
+
+        desktophost::AudioCallback onAudio;
+        if (session->audioEncoder) {
+            onAudio = [session](desktophost::AudioChunk chunk) {
+                if (auto* encoder = session->liveAudioEncoder.load()) {
+                    encoder->encode(chunk);
+                }
+            };
+        }
+
         auto captureStatus = session->capturer->start(
             [session](desktophost::PlatformFrame frame) {
                 if (auto* encoder = session->liveEncoder.load()) {
@@ -458,7 +512,8 @@ int runServe(const Options& options) {
             },
             [](const desktophost::Status& status) {
                 std::fprintf(stderr, "capture error: %s\n", status.message().c_str());
-            });
+            },
+            std::move(onAudio));
         if (captureStatus.failed()) {
             std::fprintf(stderr, "capture failed to start: %s\n", captureStatus.message().c_str());
             return;
@@ -518,6 +573,8 @@ int runServe(const Options& options) {
             peerConfig.iceServers = splitList(options.stunUrl);
         }
         peerConfig.bitrateKbps = options.bitrateBps / 1000;
+        peerConfig.enableAudio = session->audioEncoder != nullptr;
+        peerConfig.audioBitrateKbps = options.audioBitrateBps / 1000;
         peerConfig.enableInputChannel = session->router != nullptr;
         // Tells the phone which OS it is typing into, so it can swap Cmd and
         // Ctrl before sending. The host maps by position and never remaps.
@@ -590,11 +647,15 @@ int runServe(const Options& options) {
             std::fprintf(stderr, "transport failed to start: %s\n", status.message().c_str());
             session->capturer->stop();
             session->encoder->stop();
+            if (session->audioEncoder) {
+                session->audioEncoder->stop();
+            }
             return;
         }
 
         session->livePeer.store(session->peer.get());
         session->liveEncoder.store(session->encoder.get());
+        session->liveAudioEncoder.store(session->audioEncoder.get());
         session->liveRouter.store(session->router.get());
         session->liveKeyboard.store(session->keyboard.get());
 
@@ -606,8 +667,9 @@ int runServe(const Options& options) {
         }
         stopSession(previous);
 
-        std::printf("session %s: streaming %dx%d, input %s\n", sessionId.c_str(),
+        std::printf("session %s: streaming %dx%d, audio %s, input %s\n", sessionId.c_str(),
                     session->capturer->width(), session->capturer->height(),
+                    session->audioEncoder ? "on" : "off",
                     session->router ? "enabled" : "disabled");
     };
 

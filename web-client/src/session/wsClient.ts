@@ -163,6 +163,7 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   let socket: WebSocket | null = null
   let ready: Promise<void> | null = null
   let pc: RTCPeerConnection | null = null
+  let gathered: MediaStream | null = null
   let sessionId: string | null = null
   // Bumped by every connect() and end(). A connect whose generation is stale by
   // the time the socket is ready must not send its request: React StrictMode
@@ -357,6 +358,12 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     }
   }
 
+  /** The stream tracks are gathered into when the offer carried no msid. */
+  function gatheredStream(): MediaStream {
+    gathered ??= new MediaStream()
+    return gathered
+  }
+
   async function openPeerConnection() {
     teardownPeer()
     const connection = new RTCPeerConnection({ iceServers })
@@ -399,9 +406,16 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
       event.channel.close()
     }
 
-    // The whole point of the exercise: the desktop's video track arrives here.
+    // The whole point of the exercise: the desktop's tracks arrive here, one
+    // event each — video, then audio. The desktop tags both with the same
+    // msid, so the browser hands over one MediaStream holding both and the
+    // second event carries the same object. Without the msid (an older host)
+    // the events come with no stream at all, and the tracks are gathered
+    // into one of ours here instead — replacing the stream per event would
+    // hand the video element whichever track arrived last.
     connection.ontrack = (event) => {
-      const stream = event.streams[0] ?? new MediaStream([event.track])
+      const stream = event.streams[0] ?? gatheredStream()
+      if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track)
       patch({ stream, steps: steps(5) })
     }
 
@@ -535,6 +549,7 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     pendingScroll = null
     moveScheduled = false
     pendingCandidates = []
+    gathered = null
     if (pc) {
       pc.onicecandidate = null
       pc.onicecandidateerror = null

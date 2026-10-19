@@ -65,6 +65,13 @@ export function Settings() {
             }
           />
           <ListRow
+            label="Sound"
+            sub="Play what the computer is playing"
+            trailing={
+              <Toggle on={prefs.sound} onChange={(on) => setPref('sound', on)} label="Sound" />
+            }
+          />
+          <ListRow
             label="Haptics on tap"
             trailing={
               <Toggle

@@ -1,6 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createRef } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VideoStage } from '../src/viewer/VideoStage'
+import type { VideoStageHandle } from '../src/viewer/VideoStage'
 
 /* jsdom has no ResizeObserver, so the stage measures 0x0, contain-fit returns
  * no box and nothing inside the frame renders at all. Reporting a size is what
@@ -114,5 +116,121 @@ describe('VideoStage wheel', () => {
     const { container } = render(<VideoStage trackSize={TRACK} />)
     const stage = container.firstElementChild as HTMLElement
     expect(fireEvent.wheel(stage, { deltaY: 100 })).toBe(true)
+  })
+})
+
+/* Sound. The element always starts muted — that is the autoplay deal on a
+ * phone — and is unmuted afterwards, with the browser's refusal turned into
+ * something the viewer can show and a gesture can fix. */
+describe('VideoStage sound', () => {
+  const stream = { id: 'remote' } as unknown as MediaStream
+  let play: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+    Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+      value: null,
+      writable: true,
+      configurable: true,
+    })
+    // jsdom's play() is "not implemented"; the stage needs a real promise.
+    play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('stays muted while sound is off, and never reports a block', async () => {
+    const onAudioBlocked = vi.fn()
+    const { container } = render(
+      <VideoStage trackSize={TRACK} stream={stream} muted onAudioBlocked={onAudioBlocked} />,
+    )
+    const video = container.querySelector('video') as HTMLVideoElement
+    await act(async () => {})
+    expect(video.muted).toBe(true)
+    expect(onAudioBlocked).not.toHaveBeenCalled()
+  })
+
+  it('unmutes once the stream is attached when the browser allows it', async () => {
+    const onAudioBlocked = vi.fn()
+    const { container } = render(
+      <VideoStage trackSize={TRACK} stream={stream} muted={false} onAudioBlocked={onAudioBlocked} />,
+    )
+    const video = container.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(video.muted).toBe(false))
+    expect(play).toHaveBeenCalled()
+    // Allowed means nothing to report: the viewer only hears about trouble.
+    expect(onAudioBlocked).not.toHaveBeenCalled()
+  })
+
+  it('falls back to muted and says so when unmuted playback is refused', async () => {
+    play.mockRejectedValue(new DOMException('gesture required', 'NotAllowedError'))
+    const onAudioBlocked = vi.fn()
+    const { container } = render(
+      <VideoStage trackSize={TRACK} stream={stream} muted={false} onAudioBlocked={onAudioBlocked} />,
+    )
+    const video = container.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(onAudioBlocked).toHaveBeenCalledWith(true))
+    // Muted again, and play() asked for a second time so the picture keeps
+    // moving — WebKit pauses a muted-autoplay video that is unmuted outside
+    // a gesture.
+    expect(video.muted).toBe(true)
+    expect(play.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('uses the next touch on the stage, a gesture, to unmute', async () => {
+    play.mockRejectedValue(new DOMException('gesture required', 'NotAllowedError'))
+    const onAudioBlocked = vi.fn()
+    const { container } = render(
+      <VideoStage trackSize={TRACK} stream={stream} muted={false} onAudioBlocked={onAudioBlocked} />,
+    )
+    const video = container.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(onAudioBlocked).toHaveBeenCalledWith(true))
+
+    // The tap is the gesture the browser wanted.
+    play.mockResolvedValue(undefined)
+    const stage = container.firstElementChild as HTMLElement
+    fireEvent.pointerDown(stage, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 })
+    await waitFor(() => expect(onAudioBlocked).toHaveBeenLastCalledWith(false))
+    expect(video.muted).toBe(false)
+  })
+
+  it('exposes unmute() for a prompt to call from its own click', async () => {
+    play.mockRejectedValue(new DOMException('gesture required', 'NotAllowedError'))
+    const onAudioBlocked = vi.fn()
+    const handle = createRef<VideoStageHandle>()
+    const { container } = render(
+      <VideoStage
+        ref={handle}
+        trackSize={TRACK}
+        stream={stream}
+        muted={false}
+        onAudioBlocked={onAudioBlocked}
+      />,
+    )
+    const video = container.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(onAudioBlocked).toHaveBeenCalledWith(true))
+
+    play.mockResolvedValue(undefined)
+    let ok = false
+    await act(async () => {
+      ok = await handle.current!.unmute()
+    })
+    expect(ok).toBe(true)
+    expect(video.muted).toBe(false)
+    expect(onAudioBlocked).toHaveBeenLastCalledWith(false)
+  })
+
+  it('re-mutes when sound is switched off mid-session', async () => {
+    const { container, rerender } = render(
+      <VideoStage trackSize={TRACK} stream={stream} muted={false} />,
+    )
+    const video = container.querySelector('video') as HTMLVideoElement
+    await waitFor(() => expect(video.muted).toBe(false))
+    rerender(<VideoStage trackSize={TRACK} stream={stream} muted />)
+    await act(async () => {})
+    expect(video.muted).toBe(true)
   })
 })

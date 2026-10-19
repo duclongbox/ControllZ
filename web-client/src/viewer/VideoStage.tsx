@@ -3,7 +3,7 @@ import type {
   PointerEvent as ReactPointerEvent,
   ReactNode,
 } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { cn } from '../lib/cn'
 import { useElementSize } from '../lib/hooks'
 import { containFit, toFramePoint } from '../lib/normalise'
@@ -54,21 +54,67 @@ export interface VideoStageProps {
    * the compatibility mouse events are cancelled.
    */
   holdFocus?: boolean
+  /**
+   * Silence the desktop's audio. True is the state the video element always
+   * starts in — autoplay with sound is refused on a phone — and the stage
+   * tries to unmute as soon as this goes false. If the browser refuses that
+   * (iOS Safari, before any tap), the element stays muted and
+   * `onAudioBlocked(true)` says so; the next pointer-down on the stage, which
+   * is a user gesture, is used to unmute, as is `unmute()` on the handle.
+   */
+  muted?: boolean
+  /** Whether sound is currently wanted but withheld by the browser. */
+  onAudioBlocked?: (blocked: boolean) => void
   /** Overlays that need to know where the frame actually is. */
   children?: (box: FrameBox | null) => ReactNode
 }
 
-export function VideoStage({
-  trackSize,
-  stream = null,
-  dim = 0,
-  showGuides = false,
-  onPointer,
-  onWheel,
-  onActivity,
-  holdFocus = false,
-  children,
-}: VideoStageProps) {
+export interface VideoStageHandle {
+  /**
+   * Try to unmute from inside a user gesture. Resolves to whether sound is
+   * now playing; a refusal leaves the video playing muted.
+   */
+  unmute: () => Promise<boolean>
+}
+
+/**
+ * Unmute `video` and make sure it is playing. Returns whether that was
+ * allowed. On refusal the element is put back the way it was: muted and
+ * playing, since WebKit pauses a muted-autoplay video that is unmuted
+ * outside a gesture, and a paused stage is a frozen desktop.
+ */
+async function tryUnmute(video: HTMLVideoElement): Promise<boolean> {
+  video.muted = false
+  try {
+    await video.play()
+    return true
+  } catch {
+    video.muted = true
+    try {
+      await video.play()
+    } catch {
+      // Still refused muted — autoplay itself will pick it up.
+    }
+    return false
+  }
+}
+
+export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function VideoStage(
+  {
+    trackSize,
+    stream = null,
+    dim = 0,
+    showGuides = false,
+    onPointer,
+    onWheel,
+    onActivity,
+    holdFocus = false,
+    muted = true,
+    onAudioBlocked,
+    children,
+  },
+  handle,
+) {
   const { ref, size } = useElementSize<HTMLDivElement>()
   const frameRef = useRef<HTMLDivElement>(null)
   const activePointer = useRef<number | null>(null)
@@ -103,6 +149,59 @@ export function VideoStage({
       video.removeEventListener('resize', measure)
     }
   }, [stream, video])
+
+  // Sound. The element is muted whenever `muted` says so or the browser has
+  // refused; `blocked` is the difference between those two, and is what a
+  // gesture can fix. Read through refs inside event handlers so a stale
+  // closure never unmutes against the user's wish.
+  const blocked = useRef(false)
+  const onAudioBlockedRef = useRef(onAudioBlocked)
+  onAudioBlockedRef.current = onAudioBlocked
+  const mutedRef = useRef(muted)
+  mutedRef.current = muted
+
+  const setBlocked = useCallback((next: boolean) => {
+    if (blocked.current === next) return
+    blocked.current = next
+    onAudioBlockedRef.current?.(next)
+  }, [])
+
+  const attemptUnmute = useCallback(
+    async (target: HTMLVideoElement): Promise<boolean> => {
+      const ok = await tryUnmute(target)
+      // The answer is only meaningful while sound is still wanted: a toggle
+      // off mid-attempt wins.
+      if (mutedRef.current) {
+        target.muted = true
+        setBlocked(false)
+        return false
+      }
+      setBlocked(!ok)
+      return ok
+    },
+    [setBlocked],
+  )
+
+  useEffect(() => {
+    if (!video) return
+    if (muted || !stream) {
+      video.muted = true
+      setBlocked(false)
+      return
+    }
+    void attemptUnmute(video)
+  }, [attemptUnmute, muted, setBlocked, stream, video])
+
+  useImperativeHandle(
+    handle,
+    () => ({
+      unmute: async () => {
+        if (!video || mutedRef.current) return false
+        return attemptUnmute(video)
+      },
+    }),
+    [attemptUnmute, video],
+  )
 
   const frameSize = stream !== null && intrinsic !== null ? intrinsic : trackSize
   const box = containFit(size, frameSize)
@@ -163,6 +262,9 @@ export function VideoStage({
     (event: ReactPointerEvent<HTMLDivElement>) => {
       onActivity?.(event.pointerType)
       if (holdFocus) event.preventDefault()
+      // A gesture, at last: the browser that refused sound on arrival will
+      // allow it from in here.
+      if (blocked.current && !mutedRef.current && video) void attemptUnmute(video)
       // One pointer at a time. Multi-touch gestures are deferred, and letting a
       // second finger interleave would have it fight the first for the cursor.
       if (activePointer.current !== null) return
@@ -179,7 +281,7 @@ export function VideoStage({
       }
       emit('down', event)
     },
-    [emit, holdFocus, onActivity],
+    [attemptUnmute, emit, holdFocus, onActivity, video],
   )
 
   const handleMove = useCallback(
@@ -237,7 +339,8 @@ export function VideoStage({
         >
           {stream ? (
             // muted + playsInline are what let iOS Safari start it without a
-            // tap; autoplay alone is refused.
+            // tap; autoplay alone is refused. Sound is switched on afterwards
+            // by the effect above, once the picture is already moving.
             <video ref={setVideo} className={styles.video} autoPlay muted playsInline />
           ) : (
             <DesktopFrame />
@@ -257,4 +360,4 @@ export function VideoStage({
       {children ? <div className={styles.overlay}>{children(box)}</div> : null}
     </div>
   )
-}
+})

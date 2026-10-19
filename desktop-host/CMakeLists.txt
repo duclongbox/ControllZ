@@ -59,7 +59,11 @@ include(cmake/Dependencies.cmake)
 # below, so this list stays the definition of what `core/` is allowed to be.
 add_library(desktophost_core STATIC
     src/version.cpp
+    src/capture/test_tone.cpp
     src/encode/annex_b.cpp
+    # Opus is pure CPU and the same on every platform; see
+    # cmake/Dependencies.cmake for why there is no per-platform audio encoder.
+    src/encode/opus_audio_encoder.cpp
     src/transport/peer_connection_rtc.cpp
     src/transport/mdns_candidate.cpp
     src/signaling/signaling_client_ws.cpp
@@ -85,7 +89,9 @@ target_link_libraries(desktophost_core
     PUBLIC ${DESKTOPHOST_DATACHANNEL}
     # Private: JSON is an implementation detail of the signaling client and
     # must not leak into the interface headers other packages compile against.
+    # Opus likewise: audio_encoder.h speaks in AudioChunk and bytes.
     PRIVATE nlohmann_json::nlohmann_json
+    PRIVATE Opus::opus
 )
 
 if(APPLE)
@@ -133,6 +139,9 @@ elseif(WIN32)
     target_sources(desktophost_core PRIVATE
         src/platform/win/d3d_device.cpp
         src/capture/screen_capturer_win.cpp
+        # System audio: WASAPI loopback on the default output, owned by the
+        # screen capturer so both platforms present one capture seam.
+        src/capture/audio_loopback_win.cpp
         src/capture/test_pattern_capturer_win.cpp
         src/encode/video_encoder_mf.cpp
         src/input/input_injector_win.cpp
@@ -157,6 +166,8 @@ elseif(WIN32)
         strmiids
         # C++/WinRT, for Windows.Graphics.Capture.
         windowsapp
+        # CoCreateInstance for the WASAPI device enumerator.
+        ole32
         user32
         ws2_32
     )

@@ -7,6 +7,11 @@ add_executable(desktophost_tests
     # Portable: libdatachannel is the transport on every platform, and
     # gathering host candidates needs no network.
     transport_test.cpp
+    # Portable: Opus is the same CPU encoder everywhere, so the audio path up
+    # to the packetizer is covered on the Linux runner too.
+    opus_audio_encoder_test.cpp
+    # The synthetic audio source, which is what `--test-pattern` streams.
+    test_tone_test.cpp
     # Drives the real signaling client against a loopback WebSocket server, so
     # the re-enrolment path is exercised end to end. No external network.
     signaling_reenrol_test.cpp

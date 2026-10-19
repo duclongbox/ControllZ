@@ -21,9 +21,10 @@
   top: 0;
   justify-content: space-between;
   background: var(--scrim-chrome-top);
+  /* Room on the right for the menu button, which sits in that corner. */
   padding:
     calc(env(safe-area-inset-top) + 14px)
-    calc(env(safe-area-inset-right) + var(--space-lg))
+    calc(env(safe-area-inset-right) + var(--space-lg) + var(--size-control-lg) + var(--space-base))
     var(--space-lg)
     calc(env(safe-area-inset-left) + var(--space-lg));
 }
@@ -102,6 +103,25 @@
 
 .controls::-webkit-scrollbar { display: none; }
 
+/* The menu button's corner. See MenuButton for why a corner. */
+.menu {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + var(--space-md));
+  right: calc(env(safe-area-inset-right) + var(--space-md));
+  pointer-events: auto;
+}
+
+/* Menu mode's click-catcher, under the bars and the menu button. */
+.menuScrim {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  appearance: none;
+  pointer-events: auto;
+}
+
 /* A floating control that sits above the bottom bar. */
 .floating {
   position: absolute;
@@ -118,4 +138,31 @@
   transform: translateX(-50%);
   width: min(440px, calc(100% - var(--space-2xl)));
   pointer-events: auto;
+}
+
+/* "Tap for sound". Above the bottom bar like a floating control, but on
+   the stage's own scrim so it reads as part of the picture, not the chrome:
+   it is up while the bars are down. */
+.soundPrompt {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.soundPromptButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 10px var(--space-lg);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: rgb(0 0 0 / 0.65);
+  backdrop-filter: blur(12px);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--type-size-base);
+  font-weight: 600;
+  cursor: pointer;
 }

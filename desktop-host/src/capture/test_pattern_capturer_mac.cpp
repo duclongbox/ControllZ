@@ -1,4 +1,5 @@
 #include "desktophost/capture/test_pattern_capturer.h"
+#include "desktophost/capture/test_tone.h"
 
 #include <CoreVideo/CoreVideo.h>
 
@@ -69,17 +70,22 @@ public:
     explicit TestPatternCapturer(const CaptureConfig& config)
         : width_(std::max(2, config.maxWidth & ~1)),
           height_(std::max(2, config.maxHeight & ~1)),
-          fps_(std::max(1, config.maxFps)) {}
+          fps_(std::max(1, config.maxFps)),
+          captureAudio_(config.captureAudio) {}
 
     ~TestPatternCapturer() override { stop(); }
 
-    Status start(FrameCallback onFrame, CaptureErrorCallback onError) override {
+    Status start(FrameCallback onFrame, CaptureErrorCallback onError,
+                 AudioCallback onAudio = nullptr) override {
         if (running_.load()) {
             return Status::error("capture already started");
         }
         (void)onError;  // a synthetic source has no asynchronous failure mode
 
         running_.store(true);
+        if (captureAudio_ && onAudio) {
+            tone_.start(std::move(onAudio));
+        }
         worker_ = std::thread([this, onFrame = std::move(onFrame)] {
             const auto started = std::chrono::steady_clock::now();
             const auto interval = std::chrono::nanoseconds(1'000'000'000 / fps_);
@@ -107,6 +113,7 @@ public:
 
     void stop() override {
         running_.store(false);
+        tone_.stop();
         if (worker_.joinable()) {
             worker_.join();
         }
@@ -119,8 +126,10 @@ private:
     int width_;
     int height_;
     int fps_;
+    bool captureAudio_;
     std::atomic<bool> running_{false};
     std::thread worker_;
+    TestToneSource tone_;
 };
 
 }  // namespace

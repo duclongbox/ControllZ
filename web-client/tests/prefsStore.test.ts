@@ -21,6 +21,13 @@ describe('prefs store', () => {
     expect(getPrefs().shortcutModifiers).toBe('auto')
   })
 
+  it('plays sound by default, and remembers it being turned off', () => {
+    expect(getPrefs().sound).toBe(true)
+    setPref('sound', false)
+    expect(getPrefs().sound).toBe(false)
+    expect(JSON.parse(localStorage.getItem('remotehost.prefs') ?? '{}').sound).toBe(false)
+  })
+
   it('writes a change through to storage', () => {
     setPref('haptics', false)
     expect(JSON.parse(localStorage.getItem('remotehost.prefs') ?? '{}').haptics).toBe(false)

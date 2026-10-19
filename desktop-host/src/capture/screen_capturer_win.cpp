@@ -24,6 +24,7 @@
 #include <mutex>
 #include <string>
 
+#include "audio_loopback_win.h"
 #include "desktophost/capture/capture_size.h"
 #include "desktophost/capture/screen_capturer.h"
 #include "platform/win/d3d_device.h"
@@ -219,16 +220,36 @@ public:
 
     ~WindowsScreenCapturer() override { stop(); }
 
-    Status start(FrameCallback onFrame, CaptureErrorCallback onError) override {
+    Status start(FrameCallback onFrame, CaptureErrorCallback onError,
+                 AudioCallback onAudio = nullptr) override {
         if (session_) {
             return Status::error("capture already started");
         }
+        Status status;
         try {
-            return startCapture(std::move(onFrame), std::move(onError));
+            status = startCapture(std::move(onFrame), std::move(onError));
         } catch (const winrt::hresult_error& error) {
             teardown();
             return Status::error("capture failed to start: " + describe(error));
         }
+        if (status.failed()) {
+            return status;
+        }
+
+        // Audio after the frames are flowing, and never fatal: a machine with
+        // no output device is still worth seeing. WASAPI loopback is a
+        // separate device entirely, which is why it is a separate object
+        // behind the same seam rather than a second output of the same
+        // session as on macOS.
+        if (config_.captureAudio && onAudio) {
+            audio_ = std::make_unique<win::AudioLoopback>();
+            if (Status audioStatus = audio_->start(std::move(onAudio)); audioStatus.failed()) {
+                std::fprintf(stderr, "[capture] system audio unavailable, video only: %s\n",
+                             audioStatus.message().c_str());
+                audio_.reset();
+            }
+        }
+        return status;
     }
 
     void stop() override {
@@ -238,6 +259,13 @@ public:
                 return;
             }
             sink_->running = false;
+        }
+
+        // Audio first: it has its own thread and joins it, so once this
+        // returns no audio callback is running.
+        if (audio_) {
+            audio_->stop();
+            audio_.reset();
         }
 
         teardown();
@@ -456,6 +484,7 @@ private:
     std::shared_ptr<CaptureSink> sink_;
     std::shared_ptr<const win::SharedDevice> device_;
     Nv12Converter converter_;
+    std::unique_ptr<win::AudioLoopback> audio_;
 
     wgd::Direct3D11::IDirect3DDevice d3dDevice_{nullptr};
     wgc::GraphicsCaptureItem item_{nullptr};
