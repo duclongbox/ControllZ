@@ -13,6 +13,12 @@
 #include <thread>
 #include <vector>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "desktophost/capture/screen_capturer.h"
 #include "desktophost/capture/test_pattern_capturer.h"
 #include "desktophost/encode/audio_encoder.h"
@@ -21,6 +27,7 @@
 #include "desktophost/input/input_protocol.h"
 #include "desktophost/input/input_router.h"
 #include "desktophost/input/keyboard_router.h"
+#include "desktophost/shutdown_gate.h"
 #include "desktophost/signaling/signaling_client.h"
 #include "desktophost/transport/mdns_candidate.h"
 #include "desktophost/transport/peer_connection.h"
@@ -60,9 +67,26 @@ struct Options {
     int audioBitrateBps = 128'000;
 };
 
-std::atomic<bool> g_interrupted{false};
+desktophost::ShutdownGate g_shutdown;
 
-void onSignal(int) { g_interrupted.store(true); }
+void onSignal(int) { g_shutdown.request(); }
+
+#if defined(_WIN32)
+// Windows delivers "the user closed the console window", log-off and shutdown
+// here, on a thread of its own, and terminates the process the moment this
+// returns. SIGINT's flag-and-wait-for-the-loop would never get to run the
+// teardown, and the teardown is what releases any mouse button or modifier
+// the phone still had held — leaving the desktop with a stuck button after
+// the host is gone. So: ask the loop to stop, then wait for it to say the
+// session is down. Four seconds sits inside the five Windows allows a close
+// handler; the releases are the first thing teardown does, so even a
+// timeout has let go of the input by the time the process is killed.
+BOOL WINAPI onConsoleEvent(DWORD) {
+    g_shutdown.request();
+    g_shutdown.waitForDone(std::chrono::seconds(4));
+    return TRUE;
+}
+#endif
 
 std::string defaultIdentityPath() {
     const char* home = std::getenv("HOME");
@@ -318,7 +342,8 @@ int runRecord(const Options& options) {
 
     const auto started = std::chrono::steady_clock::now();
     const auto deadline = started + std::chrono::seconds(options.seconds);
-    while (std::chrono::steady_clock::now() < deadline && !g_interrupted.load() && !failed.load()) {
+    while (std::chrono::steady_clock::now() < deadline && !g_shutdown.interrupted() &&
+           !failed.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -786,7 +811,7 @@ int runServe(const Options& options) {
     nextCodeAt.store(std::chrono::steady_clock::now() + kCodeRefresh);
 
     std::printf("waiting for a paired phone (Ctrl-C to stop)\n");
-    while (!g_interrupted.load() && !disconnected.load()) {
+    while (!g_shutdown.interrupted() && !disconnected.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // The deadman. A live session repairs a lost pointerUp within a frame
@@ -849,6 +874,19 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, onSignal);
     std::signal(SIGTERM, onSignal);
+#if defined(_WIN32)
+    // Registered after the CRT's own SIGINT hook so it is consulted first and
+    // handles Ctrl-C, Ctrl-Break and the window's close button alike.
+    SetConsoleCtrlHandler(onConsoleEvent, TRUE);
+#else
+    // The terminal going away. Its default action is to kill the process,
+    // which would skip the input release just like the Windows close button.
+    std::signal(SIGHUP, onSignal);
+#endif
 
-    return options.serve ? runServe(options) : runRecord(options);
+    const int exitCode = options.serve ? runServe(options) : runRecord(options);
+    // Lets a console-close handler that is waiting on us return; after this
+    // nothing is held on the desktop.
+    g_shutdown.markDone();
+    return exitCode;
 }
