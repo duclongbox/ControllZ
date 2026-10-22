@@ -118,3 +118,26 @@ TEST_CASE("toAbsoluteInput truncates fractions and clamps out-of-range input") {
     CHECK(toAbsoluteInput(std::numeric_limits<double>::quiet_NaN(), 0, 1920) == 0);
     CHECK(toAbsoluteInput(10.0, 0, 0) == 0);
 }
+
+TEST_CASE("takeWholePixels banks the fraction so a slow swipe still moves") {
+    using desktophost::takeWholePixels;
+    double remainder = 0;
+    CHECK(takeWholePixels(remainder, 0.4) == 0);
+    CHECK(takeWholePixels(remainder, 0.4) == 0);
+    CHECK(takeWholePixels(remainder, 0.4) == 1);
+    CHECK(remainder == Approx(0.2));
+    // Signs are kept, and so is the remainder's.
+    CHECK(takeWholePixels(remainder, -2.7) == -2);
+    CHECK(remainder == Approx(-0.5));
+    // Garbage changes nothing.
+    CHECK(takeWholePixels(remainder, std::numeric_limits<double>::infinity()) == 0);
+    CHECK(remainder == Approx(-0.5));
+}
+
+TEST_CASE("deltaToPixels scales a frame fraction against the display") {
+    using desktophost::deltaToPixels;
+    CHECK(deltaToPixels(0.25, 1920) == Approx(480.0));
+    CHECK(deltaToPixels(-0.5, 1080) == Approx(-540.0));
+    CHECK(deltaToPixels(0.5, 0) == 0.0);
+    CHECK(deltaToPixels(std::numeric_limits<double>::quiet_NaN(), 1920) == 0.0);
+}

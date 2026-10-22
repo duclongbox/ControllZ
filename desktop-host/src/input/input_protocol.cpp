@@ -13,6 +13,7 @@ using Json = nlohmann::json;
 
 std::optional<PointerAction> actionFrom(const std::string& type) {
     if (type == "pointerMove") return PointerAction::move;
+    if (type == "pointerDelta") return PointerAction::delta;
     if (type == "pointerDown") return PointerAction::down;
     if (type == "pointerUp") return PointerAction::up;
     if (type == "scroll") return PointerAction::scroll;
@@ -248,10 +249,8 @@ std::optional<PointerMessage> parsePointerMessage(std::string_view json) {
     }
 
     const auto seq = integer(doc, "seq");
-    const auto nx = number(doc, "nx");
-    const auto ny = number(doc, "ny");
     const auto buttons = integer(doc, "buttons");
-    if (!seq || !nx || !ny || !buttons) {
+    if (!seq || !buttons) {
         return std::nullopt;
     }
     if (*seq < 1 || *seq > std::numeric_limits<uint32_t>::max()) {
@@ -264,16 +263,46 @@ std::optional<PointerMessage> parsePointerMessage(std::string_view json) {
     PointerMessage message;
     message.action = *action;
     message.seq = static_cast<uint32_t>(*seq);
-    message.nx = *nx;
-    message.ny = *ny;
     message.buttons = static_cast<uint8_t>(*buttons);
     // `t` is a diagnostic and nothing reads it for ordering, so a sender that
     // omits it still gets its input injected. Every other field is load-bearing
     // and its absence is a rejection.
     message.sentAtMs = integer(doc, "t").value_or(0);
 
+    if (*action == PointerAction::delta) {
+        // No position at all: the whole point of the message. The schema's
+        // bound is ten frames of travel in one packet, which no finger or
+        // locked mouse produces in a frame; past it is a sender to refuse.
+        constexpr double kMaxDelta = 10;
+        const auto dx = number(doc, "dx");
+        const auto dy = number(doc, "dy");
+        if (!dx || !dy || std::fabs(*dx) > kMaxDelta || std::fabs(*dy) > kMaxDelta) {
+            return std::nullopt;
+        }
+        message.dx = *dx;
+        message.dy = *dy;
+        return message;
+    }
+
+    const auto nx = number(doc, "nx");
+    const auto ny = number(doc, "ny");
+    if (!nx || !ny) {
+        return std::nullopt;
+    }
+    message.nx = *nx;
+    message.ny = *ny;
+
     if (*action == PointerAction::move) {
         return message;
+    }
+
+    // Absent is false. Present must be a boolean, like `repeat` on a key: a
+    // sender that writes "true" as a string is not ours.
+    if (const auto inPlaceIt = doc.find("inPlace"); inPlaceIt != doc.end()) {
+        if (!inPlaceIt->is_boolean()) {
+            return std::nullopt;
+        }
+        message.inPlace = inPlaceIt->get<bool>();
     }
 
     if (*action == PointerAction::scroll) {

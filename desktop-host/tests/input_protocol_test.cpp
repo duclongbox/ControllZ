@@ -84,6 +84,58 @@ TEST_CASE("a scroll without deltas, or past the bound, is rejected") {
     }
 }
 
+TEST_CASE("parses a pointerDelta, which has no position") {
+    const auto message = parsePointerMessage(
+        R"({"type":"pointerDelta","seq":77,"t":1,"dx":-0.0125,"dy":0.004,"buttons":2})");
+
+    REQUIRE(message.has_value());
+    CHECK(message->action == PointerAction::delta);
+    CHECK(message->seq == 77u);
+    CHECK(message->dx == Approx(-0.0125));
+    CHECK(message->dy == Approx(0.004));
+    CHECK(message->buttons == 2);
+}
+
+TEST_CASE("a pointerDelta without deltas, or past the bound, is rejected") {
+    const char* rejected[] = {
+        R"({"type":"pointerDelta","seq":1,"t":1,"dy":0.1,"buttons":0})",
+        R"({"type":"pointerDelta","seq":1,"t":1,"dx":0.1,"buttons":0})",
+        R"({"type":"pointerDelta","seq":1,"t":1,"dx":"0.1","dy":0,"buttons":0})",
+        R"({"type":"pointerDelta","seq":1,"t":1,"dx":10.5,"dy":0,"buttons":0})",
+        R"({"type":"pointerDelta","seq":1,"t":1,"dx":0,"dy":-1e9,"buttons":0})",
+        R"({"type":"pointerDelta","seq":1,"t":1,"dx":0,"dy":0})",
+    };
+    for (const char* json : rejected) {
+        INFO(json);
+        CHECK_FALSE(parsePointerMessage(json).has_value());
+    }
+}
+
+TEST_CASE("inPlace is read on transitions and scrolls, and absent means false") {
+    const auto down = parsePointerMessage(
+        R"({"type":"pointerDown","seq":1,"t":1,"nx":0.5,"ny":0.5,"buttons":1,)"
+        R"("button":"left","clickCount":1,"inPlace":true})");
+    REQUIRE(down.has_value());
+    CHECK(down->inPlace);
+
+    const auto scroll = parsePointerMessage(
+        R"({"type":"scroll","seq":2,"t":1,"nx":0.5,"ny":0.5,"buttons":0,"dx":0,"dy":100,"inPlace":true})");
+    REQUIRE(scroll.has_value());
+    CHECK(scroll->inPlace);
+
+    const auto plain = parsePointerMessage(
+        R"({"type":"pointerUp","seq":3,"t":1,"nx":0.5,"ny":0.5,"buttons":0,)"
+        R"("button":"left","clickCount":1})");
+    REQUIRE(plain.has_value());
+    CHECK_FALSE(plain->inPlace);
+
+    // A string "true" is a sender that is not ours.
+    CHECK_FALSE(parsePointerMessage(
+                    R"({"type":"pointerDown","seq":1,"t":1,"nx":0.5,"ny":0.5,"buttons":1,)"
+                    R"("button":"left","clickCount":1,"inPlace":"true"})")
+                    .has_value());
+}
+
 TEST_CASE("a missing diagnostic timestamp is tolerated") {
     // `t` is never read for ordering — the two clocks are unsynchronised — so a
     // sender that leaves it out still gets its input injected.

@@ -50,4 +50,26 @@ int32_t toAbsoluteInput(double coordinate, double origin, double extent) {
     return static_cast<int32_t>(n > kMax ? kMax : n);
 }
 
+double deltaToPixels(double fraction, double extent) {
+    if (!std::isfinite(fraction) || !(extent >= 1.0)) {
+        return 0.0;
+    }
+    return fraction * extent;
+}
+
+int32_t takeWholePixels(double& remainder, double delta) {
+    if (!std::isfinite(delta)) {
+        return 0;
+    }
+    remainder += delta;
+    // Truncation, not rounding: the fraction stays banked, so three moves of
+    // 0.4 become one pixel on the third rather than zero forever.
+    const double whole = std::trunc(remainder);
+    remainder -= whole;
+    constexpr double kLimit = 1e6;
+    if (whole > kLimit) return static_cast<int32_t>(kLimit);
+    if (whole < -kLimit) return static_cast<int32_t>(-kLimit);
+    return static_cast<int32_t>(whole);
+}
+
 }  // namespace desktophost

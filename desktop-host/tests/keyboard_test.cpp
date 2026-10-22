@@ -36,9 +36,12 @@ public:
 
     DisplayBounds bounds() const override { return DisplayBounds{0, 0, 1000, 500}; }
     void move(ScreenPoint, uint8_t) override {}
+    void moveBy(double, double, uint8_t) override {}
     void buttonDown(ScreenPoint, MouseButton, int) override {}
     void buttonUp(ScreenPoint, MouseButton, int) override {}
+    void pressInPlace(MouseButton, bool, int) override {}
     void scroll(ScreenPoint, double, double) override {}
+    void scrollInPlace(double, double) override {}
 
     bool key(std::string_view code, bool down, bool repeat) override {
         for (const std::string& missing : unmapped) {

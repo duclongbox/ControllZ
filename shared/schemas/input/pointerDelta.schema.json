@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://remotehost.dev/schemas/input/pointerDelta.schema.json",
+  "title": "pointerDelta",
+  "description": "How far the pointer moved, with no position. Game mode only: a 3D game hides and re-centres the cursor every frame and reads the mouse as relative motion (raw input / DirectInput), so an absolute pointerMove is read as a jump from the centre on every frame and the camera spins. The host injects this as a relative move, the kind a physical mouse produces. The second delta on the channel after scroll, and safe for the same reason: deltas commute, so the host applies every one it receives in whatever order, and a lost one costs that much travel and nothing else -- exactly what a real mouse loses when a packet drops. The only ordering the host enforces is against ABSOLUTE samples: a delta older than the newest pointerMove (or button transition) is dropped, so a packet from before a mode switch cannot nudge a freshly anchored cursor. Coalesced by the sender to at most one per animation frame, deltas summed.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "pointerDelta" },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "Same stream as every other pointer message (pointerSample.schema.json). Deltas are not gated against each other, only against absolute samples."
+    },
+    "t": { "type": "integer", "description": "Sender's clock in ms. Diagnostics only." },
+    "dx": {
+      "type": "number",
+      "minimum": -10,
+      "maximum": 10,
+      "description": "Horizontal travel as a fraction of the frame, positive right. Fractions rather than pixels for the same reason positions are: the phone never learns the desktop resolution, and the host scales against the display it is injecting into. One full frame width of travel is 1.0; the bound is generous and exists only to refuse a hostile sender."
+    },
+    "dy": {
+      "type": "number",
+      "minimum": -10,
+      "maximum": 10,
+      "description": "Vertical travel, same basis as dx, positive down."
+    },
+    "buttons": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 7,
+      "description": "Buttons held after this event, as on every pointer message, so a lost pointerUp still repairs itself while the user holds right mouse to aim."
+    }
+  },
+  "required": ["type", "seq", "t", "dx", "dy", "buttons"]
+}

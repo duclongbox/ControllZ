@@ -119,6 +119,103 @@ describe('VideoStage wheel', () => {
   })
 })
 
+/* Game mode's mouse. Pointer Lock is requested from inside the press, the
+ * one place a browser allows it, and the travel every mouse event carries is
+ * reported in the frame's own units. jsdom has no Pointer Lock, so it is
+ * stubbed per test. */
+describe('VideoStage pointer lock', () => {
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+  })
+  afterEach(() => {
+    delete (Element.prototype as { requestPointerLock?: unknown }).requestPointerLock
+    delete (Document.prototype as { exitPointerLock?: unknown }).exitPointerLock
+  })
+
+  function stubPointerLock() {
+    const request = vi.fn()
+    const exit = vi.fn()
+    Element.prototype.requestPointerLock = request
+    Document.prototype.exitPointerLock = exit
+    return { request, exit }
+  }
+
+  it('asks for the lock on a mouse press, and only in game mode', () => {
+    const { request } = stubPointerLock()
+    const { container, rerender } = render(<VideoStage trackSize={TRACK} onPointer={() => {}} />)
+    const stage = container.firstElementChild as HTMLElement
+
+    fireEvent.pointerDown(stage, { pointerType: 'mouse', pointerId: 1, clientX: 400, clientY: 300 })
+    expect(request).not.toHaveBeenCalled()
+    fireEvent.pointerUp(stage, { pointerType: 'mouse', pointerId: 1, clientX: 400, clientY: 300 })
+
+    rerender(<VideoStage trackSize={TRACK} onPointer={() => {}} pointerLock />)
+    fireEvent.pointerDown(stage, { pointerType: 'mouse', pointerId: 1, clientX: 400, clientY: 300 })
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('never asks for a finger: there is no cursor to lock', () => {
+    const { request } = stubPointerLock()
+    const { container } = render(<VideoStage trackSize={TRACK} onPointer={() => {}} pointerLock />)
+    const stage = container.firstElementChild as HTMLElement
+    fireEvent.pointerDown(stage, { pointerType: 'touch', pointerId: 1, clientX: 400, clientY: 300 })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('reports the lock changing hands, and releases it when game mode ends', () => {
+    const { exit } = stubPointerLock()
+    const onPointerLockChange = vi.fn()
+    const { container, rerender } = render(
+      <VideoStage trackSize={TRACK} pointerLock onPointerLockChange={onPointerLockChange} />,
+    )
+    const stage = container.firstElementChild as HTMLElement
+
+    Object.defineProperty(document, 'pointerLockElement', { configurable: true, value: stage })
+    fireEvent(document, new Event('pointerlockchange'))
+    expect(onPointerLockChange).toHaveBeenLastCalledWith(true)
+
+    rerender(
+      <VideoStage trackSize={TRACK} pointerLock={false} onPointerLockChange={onPointerLockChange} />,
+    )
+    expect(exit).toHaveBeenCalledTimes(1)
+
+    Object.defineProperty(document, 'pointerLockElement', { configurable: true, value: null })
+    fireEvent(document, new Event('pointerlockchange'))
+    expect(onPointerLockChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('reports mouse travel in frame fractions alongside the position', async () => {
+    const onPointer = vi.fn()
+    const { container } = render(<VideoStage trackSize={TRACK} onPointer={onPointer} />)
+    const stage = container.firstElementChild as HTMLElement
+
+    // The stage measures 800x600 and the track is 1670x1080, so the frame is
+    // 800 wide and ~517 high. 80px of travel is a tenth of the frame.
+    await waitFor(() => expect(container.querySelector('[class*="frame"]')).not.toBeNull())
+    fireEvent.pointerMove(stage, {
+      pointerType: 'mouse',
+      clientX: 400,
+      clientY: 300,
+      buttons: 0,
+      movementX: 80,
+      movementY: 0,
+    })
+
+    expect(onPointer).toHaveBeenCalledTimes(1)
+    const sample = onPointer.mock.calls[0][0]
+    expect(sample.movement.dx).toBeCloseTo(0.1)
+    expect(sample.movement.dy).toBe(0)
+  })
+
+  it('reports no travel for a finger', () => {
+    const onPointer = vi.fn()
+    const { container } = render(<VideoStage trackSize={TRACK} onPointer={onPointer} />)
+    const stage = container.firstElementChild as HTMLElement
+    fireEvent.pointerDown(stage, { pointerType: 'touch', pointerId: 1, clientX: 400, clientY: 300 })
+    expect(onPointer.mock.calls[0][0].movement).toBeUndefined()
+  })
+})
+
 /* Sound. The element always starts muted — that is the autoplay deal on a
  * phone — and is unmuted afterwards, with the browser's refusal turned into
  * something the viewer can show and a gesture can fix. */

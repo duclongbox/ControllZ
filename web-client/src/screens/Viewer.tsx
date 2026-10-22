@@ -123,6 +123,9 @@ export function Viewer() {
   // the next session starts where this one ended.
   const [overlay, setOverlay] = useState<Overlay>(prefs.showStats ? 'stats' : null)
   const [pointerMode, setPointerMode] = useState<PointerMode>(prefs.pointerMode)
+  // Game mode with a mouse: whether the stage holds it under Pointer Lock.
+  // Until it does, a hint says the next click takes it.
+  const [mouseLocked, setMouseLocked] = useState(false)
   const [latched, setLatched] = useState<string[]>([])
   const [keyNotice, setKeyNotice] = useState<KeyNotice>(null)
   const fullscreen = useFullscreen()
@@ -526,6 +529,8 @@ export function Viewer() {
         holdFocus={composerOpen}
         muted={!prefs.sound}
         onAudioBlocked={setAudioBlocked}
+        pointerLock={pointerMode === 'game' && !stageCovered}
+        onPointerLockChange={setMouseLocked}
       >
         {(box) =>
           pointerMode === 'trackpad' && !reconnecting ? (
@@ -593,6 +598,13 @@ export function Viewer() {
                   Every key was released on {deviceName}.
                 </Banner>
               </ViewerBanner>
+            ) : pointerMode === 'game' && !touchUi && !mouseLocked && overlay === null ? (
+              <ViewerBanner>
+                <Banner tone="info" icon="pointer" title="Click the screen to capture the mouse">
+                  Game mode sends mouse movement as-is, the way a game reads it. Esc gives the
+                  mouse back to the browser; click again to resume.
+                </Banner>
+              </ViewerBanner>
             ) : state.transport === 'relayed' && overlay === null && barsVisible ? (
               <ViewerBanner>
                 <Banner tone="warn" title="Relayed connection">
@@ -617,6 +629,7 @@ export function Viewer() {
                   options={[
                     { value: 'trackpad', label: 'Trackpad' },
                     { value: 'direct', label: 'Direct' },
+                    { value: 'game', label: 'Game' },
                   ]}
                 />
               </FloatingControl>

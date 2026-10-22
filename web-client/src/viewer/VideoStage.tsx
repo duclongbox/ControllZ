@@ -65,6 +65,15 @@ export interface VideoStageProps {
   muted?: boolean
   /** Whether sound is currently wanted but withheld by the browser. */
   onAudioBlocked?: (blocked: boolean) => void
+  /**
+   * Game mode: take the mouse with Pointer Lock on the next mouse press, so
+   * its travel keeps arriving after the cursor would have hit the window
+   * edge. The browser releases it on Esc (and will not let a page keep it),
+   * and the next press takes it again. Going false releases it.
+   */
+  pointerLock?: boolean
+  /** Whether the stage holds the mouse right now. */
+  onPointerLockChange?: (locked: boolean) => void
   /** Overlays that need to know where the frame actually is. */
   children?: (box: FrameBox | null) => ReactNode
 }
@@ -111,6 +120,8 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
     holdFocus = false,
     muted = true,
     onAudioBlocked,
+    pointerLock = false,
+    onPointerLockChange,
     children,
   },
   handle,
@@ -206,6 +217,33 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
   const frameSize = stream !== null && intrinsic !== null ? intrinsic : trackSize
   const box = containFit(size, frameSize)
 
+  // Pointer Lock. The document owns the state and only says "it changed", so
+  // whether *this* stage holds the mouse is read back each time. Released
+  // when game mode ends or the stage goes away, so a mode switch never leaves
+  // the mouse captured by a page that has stopped reading its travel.
+  const onPointerLockChangeRef = useRef(onPointerLockChange)
+  onPointerLockChangeRef.current = onPointerLockChange
+  useEffect(() => {
+    const stage = ref.current
+    if (!stage) return
+    const changed = () => onPointerLockChangeRef.current?.(document.pointerLockElement === stage)
+    document.addEventListener('pointerlockchange', changed)
+    return () => document.removeEventListener('pointerlockchange', changed)
+  }, [ref])
+  useEffect(() => {
+    if (pointerLock) return
+    const stage = ref.current
+    if (stage && document.pointerLockElement === stage) document.exitPointerLock()
+  }, [pointerLock, ref])
+  useEffect(
+    () => () => {
+      if (ref.current && document.pointerLockElement === ref.current) document.exitPointerLock()
+    },
+    [ref],
+  )
+
+  const boxWidth = box?.width ?? 0
+  const boxHeight = box?.height ?? 0
   const emit = useCallback(
     (kind: StagePointerSample['kind'], event: ReactPointerEvent<HTMLDivElement>) => {
       if (!onPointer) return
@@ -216,15 +254,23 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
             videoHeight: frameSize.height,
           })
         : null
+      // Travel in frame fractions, the same basis as the position. A mouse
+      // reports it on every event, and under Pointer Lock it is the only
+      // motion there is: the position freezes where the lock was taken.
+      const movement =
+        event.pointerType === 'mouse' && boxWidth > 0 && boxHeight > 0
+          ? { dx: (event.movementX ?? 0) / boxWidth, dy: (event.movementY ?? 0) / boxHeight }
+          : undefined
       onPointer({
         kind,
         frame,
         at: event.timeStamp,
         pointerType: event.pointerType,
         buttons: event.buttons,
+        movement,
       })
     },
-    [onPointer, frameSize.height, frameSize.width],
+    [onPointer, frameSize.height, frameSize.width, boxWidth, boxHeight],
   )
 
   // Native, not React's onWheel: React attaches wheel listeners as passive, and
@@ -265,6 +311,24 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       // A gesture, at last: the browser that refused sound on arrival will
       // allow it from in here.
       if (blocked.current && !mutedRef.current && video) void attemptUnmute(video)
+      // And the gesture Pointer Lock needs. Only for a mouse: a finger has no
+      // cursor to lock, and some browsers refuse the call for a touch.
+      if (pointerLock && event.pointerType === 'mouse') {
+        const stage = event.currentTarget
+        if (document.pointerLockElement !== stage) {
+          try {
+            // Older browsers return nothing; newer ones a promise that rejects
+            // when the lock is refused (a security gesture limit, a dialog),
+            // which is a state the next press can retry rather than an error.
+            const request = (stage as { requestPointerLock?: () => unknown }).requestPointerLock
+            const result = request?.call(stage)
+            if (result instanceof Promise) result.catch(() => {})
+          } catch {
+            // Unsupported. Game mode still works until the mouse reaches the
+            // window edge, which is the fallback pointerControl has.
+          }
+        }
+      }
       // One pointer at a time. Multi-touch gestures are deferred, and letting a
       // second finger interleave would have it fight the first for the cursor.
       if (activePointer.current !== null) return
@@ -281,7 +345,7 @@ export const VideoStage = forwardRef<VideoStageHandle, VideoStageProps>(function
       }
       emit('down', event)
     },
-    [attemptUnmute, emit, holdFocus, onActivity, video],
+    [attemptUnmute, emit, holdFocus, onActivity, pointerLock, video],
   )
 
   const handleMove = useCallback(

@@ -15,8 +15,8 @@
       "channel": "input",
       "ordered": false,
       "maxRetransmits": 0,
-      "carries": ["pointerMove", "pointerDown", "pointerUp", "scroll"],
-      "why": "Pointer samples are absolute and superseded by the next one. A retransmitted coordinate is already wrong, and ordered delivery would stall every sample behind a lost one."
+      "carries": ["pointerMove", "pointerDelta", "pointerDown", "pointerUp", "scroll"],
+      "why": "Pointer samples are absolute and superseded by the next one. A retransmitted coordinate is already wrong, and ordered delivery would stall every sample behind a lost one. A pointerDelta (game mode) is the exception that proves it: deltas commute and a lost one is a few pixels of camera travel, so the same channel suits it; see pointerDelta.schema.json."
     },
     {
       "channel": "keys",
@@ -28,6 +28,7 @@
   ],
   "messages": [
     { "type": "pointerMove", "direction": "phoneToDesktop", "schema": "pointerMove.schema.json" },
+    { "type": "pointerDelta", "direction": "phoneToDesktop", "schema": "pointerDelta.schema.json" },
     { "type": "pointerDown", "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" },
     { "type": "pointerUp",   "direction": "phoneToDesktop", "schema": "pointerButton.schema.json" },
     { "type": "scroll",      "direction": "phoneToDesktop", "schema": "scroll.schema.json" },
@@ -39,6 +40,7 @@
   "deferred": [
     { "type": "on-screen modifier bar on phones", "milestone": "keyboard follow-up", "note": "esc/tab/ctrl/alt/cmd/shift and the arrows over the phone's OS keyboard. Together they covered half the screen and the user could not see what they were typing, so on a phone the Keyboard overlay is the OS keyboard alone, dismissed by its own hide key; the bar still serves desktop browsers. To return as a menu option rather than a permanent row." },
     { "type": "soft-keyboard modifier chords", "milestone": "keyboard follow-up", "note": "Ctrl/Cmd/Alt applied to characters typed on the phone's on-screen keyboard. `text` carries characters with no modifier state, and the host types them with no flags; the on-screen modifier bar's latched modifiers wrap only the bar's own keys. Chording a soft-keyboard letter would need the phone to turn the character back into a position (impossible in general: the host's layout is what maps positions to characters) or a `text` field for modifiers that the host applies as flags." },
-    { "type": "reserved shortcut capture", "milestone": "keyboard follow-up", "note": "Capturing browser- and OS-reserved combos (Ctrl+W, Ctrl+T, Alt+Tab, Win key) with the Keyboard Lock API in fullscreen, so they reach the desktop instead of the browser. Until then the phone warns (beforeunload, an in-viewer banner) and the on-screen modifier keys are the way to send them. Ctrl <-> Command translation is DONE: the phone does it from `hostInfo`." }
+    { "type": "reserved shortcut capture", "milestone": "keyboard follow-up", "note": "Capturing browser- and OS-reserved combos (Ctrl+W, Ctrl+T, Alt+Tab, Win key) with the Keyboard Lock API in fullscreen, so they reach the desktop instead of the browser. Until then the phone warns (beforeunload, an in-viewer banner) and the on-screen modifier keys are the way to send them. Ctrl <-> Command translation is DONE: the phone does it from `hostInfo`." },
+    { "type": "automatic game detection", "milestone": "game mode follow-up", "note": "Switching to relative (Game) pointer mode by detecting a hidden or clipped cursor on the host. Deliberately manual: a wrong guess turns a desktop app's pointer into a mouse that nothing on the phone can see, so the mode is a toggle next to Direct and Trackpad. Esc exiting the browser's Pointer Lock instead of reaching the game is the reserved-shortcut problem above." }
   ]
 }

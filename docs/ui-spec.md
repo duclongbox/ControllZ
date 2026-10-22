@@ -75,6 +75,7 @@ CLAUDE.md. Breaking one is a bug, not a style disagreement.
 | `ViewerMenu` | `/session/:id` | M2 | — | menu button in the top-right corner (in a black bar when the picture leaves one) toggles menu mode: both bars up, the stage dimmed and paused, a tap on the stage closes it and is not forwarded; choosing an action closes it — **built** |
 | `ViewerStats` | `/session/:id` | M1 | — | `RTCPeerConnection.getStats()` at 1 Hz |
 | `ViewerInputTrackpad` | `/session/:id` | M2 | `pointerMove/Down/Up`, `scroll` | unordered DataChannel, coalesced per rAF (scroll deltas summed) — **built** |
+| `ViewerInputGame` | `/session/:id` | M2+ | `pointerDelta`, `pointerDown/Up` + `inPlace`, `scroll` + `inPlace` | third pointer mode for apps that hide and re-centre the cursor and read relative motion (3D games): travel instead of position, clicks in place, Pointer Lock for a mouse; leaving it re-anchors with one `pointerMove` — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown/keyUp` | own ordered, reliable `keys` DataChannel; physical codes — **built** |
 | `ViewerKeyboard` | `/session/:id` | M2 | `keyDown`, `keyUp` | physical `code` + modifier state |
 | `ViewerSoftKeyboard` | `/session/:id` | M2 | `text`, `keyDown/keyUp` | phone only (`pointer: coarse`): Keyboard focuses a hidden textarea, the OS keyboard types into it, each change is diffed into `text` runs and Backspace/Delete/Enter/Tab presses on the `keys` channel; nothing of ours over the keyboard, which its own hide key dismisses (the modifier bar and arrows are deferred on phones, to come back as a menu option); modifier chords with soft-keyboard text deferred — **built** |
@@ -184,10 +185,25 @@ On the wire:
 { "type": "pointerMove", "seq": 40118, "t": 1757030412, "nx": 0.6183, "ny": 0.4402 }
 ```
 
-A `scroll` carries the same position plus `dx`/`dy` — the one delta on the
-channel, in CSS pixels with a wheel notch normalised to 100. Deltas commute, so
-the host applies every scroll it receives in any order; only its position is
-gated like a move's (`shared/schemas/input/scroll.schema.json`).
+A `scroll` carries the same position plus `dx`/`dy` — a delta, in CSS pixels
+with a wheel notch normalised to 100. Deltas commute, so the host applies every
+scroll it receives in any order; only its position is gated like a move's
+(`shared/schemas/input/scroll.schema.json`).
+
+**Game mode** sends no positions at all. A 3D game hides the cursor, re-centres
+it every frame and reads the mouse as relative motion (raw input), so an
+absolute `pointerMove` is read as a jump from the centre on every frame and the
+camera spins. Game mode sends `pointerDelta` — travel in frame fractions, what a
+physical mouse reports — which the host injects as a relative move; clicks and
+scrolls carry `inPlace: true` so the host does not position the cursor first.
+Deltas are gated only against absolute samples (one from before a mode switch
+cannot nudge a re-anchored cursor), never against each other. A mouse in game
+mode is taken with Pointer Lock on the first click, so its travel keeps
+arriving past the window edge; Esc gives it back, as browsers insist. Leaving
+game mode sends one `pointerMove` to put the two cursors back in step
+(`shared/schemas/input/pointerDelta.schema.json`). Deliberately a manual
+toggle: guessing from the host side would turn a desktop app's pointer into a
+mouse nothing on the phone can see.
 
 On the host, at injection time — against the display's **bounds in the OS's
 global coordinate space**, not the captured frame's pixel dimensions:

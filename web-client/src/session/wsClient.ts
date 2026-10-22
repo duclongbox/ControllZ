@@ -182,6 +182,9 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
   // Wheel deltas summed since the last frame. Unlike a move, a scroll cannot
   // be replaced by the newest one — each is distance the user asked for.
   let pendingScroll: Extract<PointerIntent, { kind: 'scroll' }> | null = null
+  // Game-mode deltas summed since the last frame, like a scroll: each is
+  // distance the user moved, so the newest cannot stand in for the rest.
+  let pendingDelta: Extract<PointerIntent, { kind: 'delta' }> | null = null
   let moveScheduled = false
   // Candidates that arrived before the offer was applied. addIceCandidate
   // throws until a remote description is in place, and the desktop trickles
@@ -477,8 +480,15 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     }
   }
 
+  function flushPendingDelta() {
+    const delta = pendingDelta
+    pendingDelta = null
+    if (delta && (delta.dx !== 0 || delta.dy !== 0)) sendInput(delta)
+  }
+
   function flushPendingMove() {
     moveScheduled = false
+    flushPendingDelta()
     const move = pendingMove
     const scroll = pendingScroll
     pendingMove = null
@@ -697,6 +707,17 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
     },
 
     sendPointer(intent: PointerIntent) {
+      if (intent.kind === 'delta') {
+        // Summed per frame, like a scroll. A locked mouse reports at its
+        // polling rate, often 1000 Hz, and the host adds them up the same
+        // either way.
+        pendingDelta = pendingDelta
+          ? { ...intent, dx: pendingDelta.dx + intent.dx, dy: pendingDelta.dy + intent.dy }
+          : intent
+        scheduleFlush()
+        return
+      }
+
       if (intent.kind === 'scroll') {
         // Summed per frame. A Windows precision touchpad fires wheel events
         // well above the display rate, and each one is a packet on the same
@@ -719,6 +740,10 @@ export function createWsClient(options: WsClientOptions = {}): WsSessionClient {
         // scroll is different — it is distance, not position — so it goes
         // first, keeping "scrolled, then clicked" in that order.
         pendingMove = null
+        // A waiting delta goes first too: the host drops a delta that
+        // arrives behind a newer transition, so one sent after the click
+        // would be lost rather than merely late.
+        flushPendingDelta()
         const scroll = pendingScroll
         pendingScroll = null
         if (scroll && (scroll.dx !== 0 || scroll.dy !== 0)) sendInput(scroll)

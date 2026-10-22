@@ -23,7 +23,7 @@ using desktophost::ScreenPoint;
 namespace {
 
 struct Event {
-    enum class Kind { move, down, up, scroll };
+    enum class Kind { move, moveBy, down, up, pressInPlace, scroll, scrollInPlace };
 
     Kind kind;
     double x = 0;
@@ -46,8 +46,23 @@ public:
                                heldButtons});
     }
 
+    void moveBy(double dx, double dy, uint8_t heldButtons) override {
+        events.push_back(
+            Event{Event::Kind::moveBy, 0, 0, MouseButton::left, 0, heldButtons, dx, dy});
+    }
+
     void buttonDown(ScreenPoint point, MouseButton button, int clickCount) override {
         events.push_back(Event{Event::Kind::down, point.x, point.y, button, clickCount, 0});
+    }
+
+    void pressInPlace(MouseButton button, bool down, int clickCount) override {
+        events.push_back(Event{Event::Kind::pressInPlace, 0, 0, button, clickCount,
+                               static_cast<uint8_t>(down ? 1 : 0)});
+    }
+
+    void scrollInPlace(double dx, double dy) override {
+        events.push_back(
+            Event{Event::Kind::scrollInPlace, 0, 0, MouseButton::left, 0, 0, dx, dy});
     }
 
     void buttonUp(ScreenPoint point, MouseButton button, int clickCount) override {
@@ -90,6 +105,18 @@ std::string scroll(uint32_t seq, double nx, double ny, double dx, double dy, int
            std::to_string(nx) + R"(,"ny":)" + std::to_string(ny) + R"(,"buttons":)" +
            std::to_string(buttons) + R"(,"dx":)" + std::to_string(dx) + R"(,"dy":)" +
            std::to_string(dy) + "}";
+}
+
+std::string delta(uint32_t seq, double dx, double dy, int buttons = 0) {
+    return R"({"type":"pointerDelta","seq":)" + std::to_string(seq) + R"(,"t":1,"dx":)" +
+           std::to_string(dx) + R"(,"dy":)" + std::to_string(dy) + R"(,"buttons":)" +
+           std::to_string(buttons) + "}";
+}
+
+std::string inPlace(const char* type, uint32_t seq, int buttons, const char* name = "left") {
+    return std::string(R"({"type":")") + type + R"(","seq":)" + std::to_string(seq) +
+           R"(,"t":1,"nx":0.5,"ny":0.5,"buttons":)" + std::to_string(buttons) +
+           R"(,"button":")" + name + R"(","clickCount":1,"inPlace":true})";
 }
 
 /// Never the zero time_point: the router reads that as "no message yet" and
@@ -357,4 +384,142 @@ TEST_CASE("a scroll's button mask repairs a lost release, like a move's") {
 
     CHECK(router.heldButtons() == 0);
     CHECK(injector.count(Event::Kind::up) == 1);
+}
+
+/* Game mode. The cursor is driven by deltas, which the router scales to pixels
+ * and never positions, because a game that re-centres its cursor reads any
+ * absolute move as a camera jump. */
+
+TEST_CASE("a delta is injected as a relative move, scaled to the display") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(delta(1, 0.1, -0.2), kStart);
+
+    REQUIRE(injector.events.size() == 1);
+    CHECK(injector.events[0].kind == Event::Kind::moveBy);
+    // 0.1 of a 1000-wide display, -0.2 of a 500-high one.
+    CHECK(injector.events[0].dx == Approx(100.0));
+    CHECK(injector.events[0].dy == Approx(-100.0));
+    CHECK(injector.count(Event::Kind::move) == 0);
+    CHECK(router.stats().applied == 1);
+}
+
+TEST_CASE("deltas are not gated against each other, because they commute") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(delta(5, 0.1, 0), kStart);
+    router.handleMessage(delta(4, 0.1, 0), kStart);
+
+    // Two swapped on the wire add up to the same travel; dropping the second
+    // would lose a real mouse movement.
+    CHECK(injector.count(Event::Kind::moveBy) == 2);
+    CHECK(router.stats().staleDropped == 0);
+}
+
+TEST_CASE("a delta from before an absolute move cannot nudge the re-anchored cursor") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    // The phone switched out of game mode and re-anchored at seq 10; a delta
+    // it sent at seq 9 arrives late.
+    router.handleMessage(move(10, 0.5, 0.5), kStart);
+    router.handleMessage(delta(9, 0.3, 0.3), kStart);
+
+    CHECK(injector.count(Event::Kind::moveBy) == 0);
+    CHECK(router.stats().staleDropped == 1);
+    // And a delta after it is fine.
+    router.handleMessage(delta(11, 0.3, 0.3), kStart);
+    CHECK(injector.count(Event::Kind::moveBy) == 1);
+}
+
+TEST_CASE("an in-place press does not move the cursor first") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(delta(1, 0.1, 0.1), kStart);
+    router.handleMessage(inPlace("pointerDown", 2, 1), kStart);
+    router.handleMessage(inPlace("pointerUp", 3, 0), kStart);
+
+    CHECK(injector.count(Event::Kind::pressInPlace) == 2);
+    CHECK(injector.count(Event::Kind::down) == 0);
+    CHECK(injector.count(Event::Kind::up) == 0);
+    CHECK(injector.count(Event::Kind::move) == 0);
+    CHECK(router.heldButtons() == 0);
+}
+
+TEST_CASE("an in-place press before any delta still does not land at the stale point") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    // First message of the session. The router's remembered position is the
+    // origin, and positioning there would click the top-left corner.
+    router.handleMessage(inPlace("pointerDown", 1, 2, "right"), kStart);
+
+    REQUIRE(injector.events.size() == 1);
+    CHECK(injector.events[0].kind == Event::Kind::pressInPlace);
+    CHECK(injector.events[0].button == MouseButton::right);
+}
+
+TEST_CASE("repairs and the deadman happen in place once deltas have moved the cursor") {
+    FakeInjector injector;
+    InputRouter router(&injector, InputRouterConfig{std::chrono::milliseconds(100), 600});
+
+    router.handleMessage(inPlace("pointerDown", 1, 2, "right"), kStart);
+    // Holding right to aim and turning: the delta carries the mask.
+    router.handleMessage(delta(2, 0.05, 0, 2), kStart);
+    // The release is lost; the next delta says nothing is held.
+    router.handleMessage(delta(3, 0.05, 0, 0), kStart);
+
+    CHECK(router.heldButtons() == 0);
+    CHECK(router.stats().repairedButtons == 1);
+    CHECK(injector.count(Event::Kind::up) == 0);
+    CHECK(injector.count(Event::Kind::pressInPlace) == 2);
+
+    // Deadman, the same way.
+    router.handleMessage(inPlace("pointerDown", 4, 1), kStart);
+    router.tick(kStart + std::chrono::milliseconds(150));
+    CHECK(router.heldButtons() == 0);
+    CHECK(injector.count(Event::Kind::up) == 0);
+    CHECK(injector.count(Event::Kind::pressInPlace) == 4);
+}
+
+TEST_CASE("an absolute move re-anchors: later presses are positioned again") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(delta(1, 0.1, 0.1), kStart);
+    router.handleMessage(move(2, 0.5, 0.5), kStart);
+    router.handleMessage(button("pointerDown", 3, 0.5, 0.5, 1), kStart);
+
+    CHECK(injector.count(Event::Kind::pressInPlace) == 0);
+    REQUIRE(injector.count(Event::Kind::down) == 1);
+}
+
+TEST_CASE("an in-place scroll lands wherever the cursor is") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(delta(1, 0.1, 0.1), kStart);
+    router.handleMessage(
+        R"({"type":"scroll","seq":2,"t":1,"nx":0.5,"ny":0.5,"buttons":0,"dx":0,"dy":100,"inPlace":true})",
+        kStart);
+
+    CHECK(injector.count(Event::Kind::move) == 0);
+    CHECK(injector.count(Event::Kind::scroll) == 0);
+    REQUIRE(injector.count(Event::Kind::scrollInPlace) == 1);
+    CHECK(injector.events.back().dy == Approx(100.0));
+}
+
+TEST_CASE("a delta's button mask cannot be undone by a move reordered behind a press") {
+    FakeInjector injector;
+    InputRouter router(&injector);
+
+    router.handleMessage(inPlace("pointerDown", 10, 1), kStart);
+    // Sent before the press, arriving after, with buttons: 0.
+    router.handleMessage(delta(9, 0.01, 0, 0), kStart);
+
+    CHECK(router.heldButtons() == desktophost::kMaskLeft);
+    CHECK(router.stats().staleDropped == 1);
 }

@@ -93,6 +93,28 @@ public:
         SendInput(1, &input, sizeof(INPUT));
     }
 
+    // No MOUSEEVENTF_ABSOLUTE: this is the event a physical mouse produces,
+    // and it is what a game reads. Through raw input (WM_INPUT) it arrives as
+    // MOUSE_MOVE_RELATIVE with these exact counts, where an absolute
+    // injection arrives flagged absolute in a 0…65535 space that a game
+    // assuming relative reads as a huge jump. NOCOALESCE so a burst of small
+    // moves is not merged by the message queue into one for the window
+    // (raw input is never coalesced either way).
+    void moveBy(double dx, double dy, uint8_t heldButtons) override {
+        (void)heldButtons;
+        const LONG px = takeWholePixels(pendingMoveX_, dx);
+        const LONG py = takeWholePixels(pendingMoveY_, dy);
+        if (px == 0 && py == 0) {
+            return;
+        }
+        INPUT input{};
+        input.type = INPUT_MOUSE;
+        input.mi.dx = px;
+        input.mi.dy = py;
+        input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_MOVE_NOCOALESCE;
+        SendInput(1, &input, sizeof(INPUT));
+    }
+
     // `clickCount` is not forwarded: Windows builds double-clicks itself from
     // two presses within the double-click time and distance, which a phone
     // double-tap meets. There is no field to carry it in.
@@ -106,10 +128,22 @@ public:
         sendAt(point, upFlagFor(button));
     }
 
+    void pressInPlace(MouseButton button, bool down, int clickCount) override {
+        (void)clickCount;
+        INPUT input{};
+        input.type = INPUT_MOUSE;
+        input.mi.dwFlags = down ? downFlagFor(button) : upFlagFor(button);
+        SendInput(1, &input, sizeof(INPUT));
+    }
+
     // The router has already moved the cursor to `point`, and Windows 10+
     // scrolls the window under the cursor, so the wheel alone is enough.
     void scroll(ScreenPoint point, double dx, double dy) override {
         (void)point;
+        scrollInPlace(dx, dy);
+    }
+
+    void scrollInPlace(double dx, double dy) override {
         // The wire's notch is 100; Windows' is WHEEL_DELTA (120). Vertical
         // is positive-up on Windows and positive-down in the DOM; horizontal
         // is positive-right in both. Values that are not a multiple of 120
@@ -214,6 +248,9 @@ private:
     // InputRouter, under its lock.
     double pendingX_ = 0;
     double pendingY_ = 0;
+    // Sub-pixel remainder of relative moves, same rule.
+    double pendingMoveX_ = 0;
+    double pendingMoveY_ = 0;
 };
 
 }  // namespace

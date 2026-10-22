@@ -21,6 +21,9 @@ function sample(
 
 const kinds = (intents: PointerIntent[]) => intents.map((intent) => intent.kind)
 
+/** The position an intent carries; a delta has none. */
+const pointOf = (intent: PointerIntent) => ('point' in intent ? intent.point : undefined)
+
 describe('trackpad mode', () => {
   it('does not click on the way down, because a press may still become a slide', () => {
     const control = new PointerControl()
@@ -47,7 +50,7 @@ describe('trackpad mode', () => {
     expect(kinds(intents)).toEqual(['down', 'up'])
     // At the cursor, NOT at the finger: in trackpad mode the finger is only
     // ever pushing the puck around.
-    expect(intents[0].point).toEqual({ nx: 0.5, ny: 0.5 })
+    expect(pointOf(intents[0])).toEqual({ nx: 0.5, ny: 0.5 })
     expect(intents[0].buttons).toBe(1)
     expect(intents[1].buttons).toBe(0)
   })
@@ -393,19 +396,162 @@ describe('scrolling', () => {
     // Whatever the desktop scrolls is whatever is under its cursor.
     const control = new PointerControl()
     const [intent] = control.handleWheel({ frame: { nx: 0.1, ny: 0.2, inFrame: true }, dx: 30, dy: 0 })
-    expect(intent.point).toEqual({ nx: 0.1, ny: 0.2 })
+    expect(pointOf(intent)).toEqual({ nx: 0.1, ny: 0.2 })
   })
 
   it('pins a scroll over a letterbox bar to the edge', () => {
     const control = new PointerControl()
     const [intent] = control.handleWheel({ frame: { nx: 1.1, ny: 0.5, inFrame: false }, dx: 0, dy: -100 })
-    expect(intent.point).toEqual({ nx: 1, ny: 0.5 })
+    expect(pointOf(intent)).toEqual({ nx: 1, ny: 0.5 })
   })
 
   it('sends nothing for an empty delta or before a frame decodes', () => {
     const control = new PointerControl()
     expect(control.handleWheel({ frame: { nx: 0.5, ny: 0.5, inFrame: true }, dx: 0, dy: 0 })).toEqual([])
     expect(control.handleWheel({ frame: null, dx: 0, dy: 100 })).toEqual([])
+  })
+})
+
+/* Game mode. The cursor belongs to the game, which hides it, re-centres it
+ * every frame and reads the mouse as travel — so travel is what goes out, and
+ * every click is in place. */
+describe('game mode', () => {
+  function game() {
+    const control = new PointerControl()
+    control.setMode('game')
+    return control
+  }
+
+  /** A mouse sample with the travel the browser reports on it. */
+  function locked(
+    kind: StagePointerSample['kind'],
+    at: number,
+    buttons: number,
+    movement?: { dx: number; dy: number },
+  ): StagePointerSample {
+    return { ...mouse(kind, 0.5, 0.5, at, buttons), movement }
+  }
+
+  it('sends a finger slide as travel, not as a cursor position', () => {
+    const control = game()
+    control.handle(sample('down', 0.2, 0.2, 0))
+
+    const intents = control.handle(sample('move', 0.3, 0.25, 16))
+
+    expect(intents).toHaveLength(1)
+    expect(intents[0]).toMatchObject({ kind: 'delta', buttons: 0 })
+    expect((intents[0] as { dx: number }).dx).toBeCloseTo(0.1)
+    expect((intents[0] as { dy: number }).dy).toBeCloseTo(0.05)
+    // The phone's cursor is untouched: it is the game's now.
+    expect(control.getCursor()).toEqual({ nx: 0.5, ny: 0.5 })
+  })
+
+  it('does not pin travel at the frame edge, which is what turning the camera needs', () => {
+    const control = game()
+    control.handle(sample('down', 0.9, 0.5, 0))
+    // Four long swipes right; in trackpad mode the cursor would stop at 1.
+    let total = 0
+    for (let i = 0; i < 4; i++) {
+      control.handle(sample('down', 0.1, 0.5, i * 100))
+      const [intent] = control.handle(sample('move', 0.9, 0.5, i * 100 + 16))
+      total += (intent as { dx: number }).dx
+      control.handle(sample('up', 0.9, 0.5, i * 100 + 50))
+    }
+    expect(total).toBeCloseTo(3.2)
+  })
+
+  it('turns a tap into an in-place click, and chains a double tap', () => {
+    const control = game()
+    control.handle(sample('down', 0.2, 0.2, 0))
+    const first = control.handle(sample('up', 0.2, 0.2, 80))
+
+    expect(kinds(first)).toEqual(['down', 'up'])
+    expect(first[0]).toMatchObject({ button: 'left', clickCount: 1, inPlace: true, buttons: 1 })
+    expect(first[1]).toMatchObject({ inPlace: true, buttons: 0 })
+
+    control.handle(sample('down', 0.6, 0.6, 200))
+    const second = control.handle(sample('up', 0.6, 0.6, 260))
+    // Far from the first tap on the glass, but there is no position here to
+    // be far from: a game double-click is two quick taps anywhere.
+    expect(second[0]).toMatchObject({ clickCount: 2, inPlace: true })
+  })
+
+  it('does not click after a slide or a long hold, as in trackpad mode', () => {
+    const control = game()
+    control.handle(sample('down', 0.2, 0.2, 0))
+    control.handle(sample('move', 0.6, 0.6, 16))
+    expect(control.handle(sample('up', 0.6, 0.6, 120))).toEqual([])
+
+    control.handle(sample('down', 0.2, 0.2, 1000))
+    expect(control.handle(sample('up', 0.2, 0.2, 1600))).toEqual([])
+  })
+
+  it('sends mouse travel from the movement the browser reports, under Pointer Lock', () => {
+    const control = game()
+    // Locked: the position never changes, only the movement does.
+    const intents = control.handle(locked('move', 0, 0, { dx: 0.02, dy: -0.01 }))
+    expect(intents).toEqual([{ kind: 'delta', dx: 0.02, dy: -0.01, buttons: 0 }])
+    expect(control.handle(locked('move', 16, 0, { dx: 0, dy: 0 }))).toEqual([])
+  })
+
+  it('falls back to the change in position when the browser reports no movement', () => {
+    const control = game()
+    expect(control.handle(mouse('move', 0.5, 0.5, 0, 0))).toEqual([])
+    const [intent] = control.handle(mouse('move', 0.6, 0.45, 16, 0))
+    expect(intent).toMatchObject({ kind: 'delta' })
+    expect((intent as { dx: number }).dx).toBeCloseTo(0.1)
+    expect((intent as { dy: number }).dy).toBeCloseTo(-0.05)
+  })
+
+  it('presses mouse buttons as themselves, in place, with travel first', () => {
+    const control = game()
+    const down = control.handle(locked('down', 0, 2, { dx: 0.01, dy: 0 }))
+    expect(kinds(down)).toEqual(['delta', 'down'])
+    expect(down[0]).toMatchObject({ buttons: 0 })
+    expect(down[1]).toMatchObject({ button: 'right', inPlace: true, buttons: 2 })
+
+    // Holding right to aim and turning: the travel carries the mask.
+    const turn = control.handle(locked('move', 16, 2, { dx: 0.01, dy: 0 }))
+    expect(turn).toEqual([{ kind: 'delta', dx: 0.01, dy: 0, buttons: 2 }])
+
+    const up = control.handle(locked('up', 100, 0, { dx: 0, dy: 0 }))
+    expect(up).toHaveLength(1)
+    expect(up[0]).toMatchObject({ kind: 'up', button: 'right', inPlace: true, buttons: 0 })
+  })
+
+  it('scrolls in place: the wheel is a weapon switch, not a position', () => {
+    const control = game()
+    const [intent] = control.handleWheel({ frame: { nx: 0.1, ny: 0.2, inFrame: true }, dx: 0, dy: 100 })
+    expect(intent).toMatchObject({ kind: 'scroll', dy: 100, inPlace: true })
+    expect(control.getCursor()).toEqual({ nx: 0.5, ny: 0.5 })
+  })
+
+  it('releases in place, then re-anchors the host with one absolute move, on leaving', () => {
+    const control = game()
+    control.handle(mouse('down', 0.5, 0.5, 0, 1))
+
+    const intents = control.setMode('trackpad')
+
+    expect(kinds(intents)).toEqual(['up', 'move'])
+    expect(intents[0]).toMatchObject({ inPlace: true })
+    expect(pointOf(intents[1])).toEqual({ nx: 0.5, ny: 0.5 })
+    expect(intents[1].buttons).toBe(0)
+    // And trackpad mode is itself again.
+    control.handle(sample('down', 0.2, 0.2, 100))
+    expect(kinds(control.handle(sample('move', 0.3, 0.2, 116)))).toEqual(['move'])
+  })
+
+  it('sends no re-anchor when entering, since the host cursor is wherever it was', () => {
+    const control = new PointerControl()
+    expect(control.setMode('game')).toEqual([])
+  })
+
+  it('releases in place on pointercancel', () => {
+    const control = game()
+    control.handle(mouse('down', 0.5, 0.5, 0, 1))
+    const intents = control.handle({ ...mouse('cancel', 0.5, 0.5, 10, 0), buttons: undefined })
+    expect(intents).toHaveLength(1)
+    expect(intents[0]).toMatchObject({ kind: 'up', inPlace: true })
   })
 })
 
