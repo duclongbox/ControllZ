@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://remotehost.dev/schemas/input/pointerButton.schema.json",
   "title": "pointerDown / pointerUp",
-  "description": "A button transition, carrying the position it happened at so it never depends on a move arriving first. Must-arrive at app level: the host synthesises a press for an orphan pointerUp, releases held buttons after a silence (deadman), and releases everything when the channel closes -- a stuck button is the worst failure this milestone can produce.",
+  "description": "A button transition, carrying the position it happened at so it never depends on a move arriving first. Must-arrive at app level: the host synthesises a press for an orphan pointerUp, releases held buttons after a silence (deadman), and releases everything when the channel closes -- a stuck button is the worst failure this milestone can produce. `inPlace` is game mode's: the host presses where its cursor already is instead of moving to nx/ny first, because a game that re-centres the cursor would read that move as a camera jump.",
   "allOf": [{ "$ref": "pointerSample.schema.json" }],
   "type": "object",
   "properties": {
@@ -16,6 +16,10 @@
       "minimum": 1,
       "maximum": 3,
       "description": "1 single, 2 double, 3 triple. THE PHONE DECIDES THIS, not the host: tap timing and finger travel are gesture context the phone has and the host would have to re-derive across a lossy channel. macOS needs it as kCGMouseEventClickState -- two plain clicks in a row do NOT register as a double-click in most apps."
+    },
+    "inPlace": {
+      "type": "boolean",
+      "description": "Press or release at the host's current cursor position, ignoring nx/ny for positioning. Absent means false: move there first, as a tap on a desktop app needs. Sent by game mode, where the host cursor has been moved by deltas and the phone no longer knows where it is."
     }
   },
   "required": ["type", "button", "clickCount"]

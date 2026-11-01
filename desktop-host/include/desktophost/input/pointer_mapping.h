@@ -28,4 +28,15 @@ ScreenPoint mapToScreen(double nx, double ny, const DisplayBounds& bounds);
 /// monitor sits left of or above the primary one.
 int32_t toAbsoluteInput(double coordinate, double origin, double extent);
 
+/// Scales a frame-fraction delta (`pointerDelta`'s dx/dy) to pixels on
+/// `bounds`: one full frame of travel is one full display. Zero for invalid
+/// bounds rather than a guess.
+double deltaToPixels(double fraction, double extent);
+
+/// Takes the whole pixels out of `remainder + delta`, leaving the fraction in
+/// `remainder` for the next call. A relative move can only be injected in
+/// whole pixels, and a slow swipe is a stream of deltas each under one, so
+/// rounding each on its own would move nothing. Non-finite input is ignored.
+int32_t takeWholePixels(double& remainder, double delta);
+
 }  // namespace desktophost

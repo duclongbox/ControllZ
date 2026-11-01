@@ -24,6 +24,9 @@ add_executable(desktophost_tests
     # Keyboard routing plus BOTH hosts' key tables, so the Windows mapping is
     # checked on a Mac runner and the Mac mapping on a Windows one.
     keyboard_test.cpp
+    # The console-close handshake: what keeps a mouse button from being left
+    # down when the host window is closed instead of Ctrl-C'd.
+    shutdown_gate_test.cpp
 )
 
 # Exercises the real platform encoder (VideoToolbox / Media Foundation) against

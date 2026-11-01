@@ -21,6 +21,16 @@ describe('prefs store', () => {
     expect(getPrefs().shortcutModifiers).toBe('auto')
   })
 
+  it('keeps every pointer mode, game included, and nothing else', () => {
+    expect(getPrefs().pointerMode).toBe('trackpad')
+    setPref('pointerMode', 'game')
+    expect(getPrefs().pointerMode).toBe('game')
+
+    localStorage.setItem('remotehost.prefs', JSON.stringify({ pointerMode: 'joystick' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: 'remotehost.prefs' }))
+    expect(getPrefs().pointerMode).toBe('trackpad')
+  })
+
   it('plays sound by default, and remembers it being turned off', () => {
     expect(getPrefs().sound).toBe(true)
     setPref('sound', false)

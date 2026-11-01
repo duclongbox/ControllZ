@@ -9,14 +9,16 @@
 
 namespace desktophost {
 
-enum class PointerAction { move, down, up, scroll };
+enum class PointerAction { move, delta, down, up, scroll };
 
 /// One parsed message from `shared/schemas/input/`.
 ///
 /// Every field is absolute: the position the event happened at, and the full
 /// button mask as of that event. Nothing here is a delta, so no message
 /// depends on another having arrived — which is the only way to survive an
-/// unordered, unreliable channel.
+/// unordered, unreliable channel. The two exceptions carry distance rather
+/// than state (`scroll`, and game mode's `delta`), and deltas commute: a lost
+/// one costs that much travel, never a wrong position.
 struct PointerMessage {
     PointerAction action = PointerAction::move;
 
@@ -42,11 +44,19 @@ struct PointerMessage {
     /// 1 single, 2 double, 3 triple. Decided by the phone.
     int clickCount = 1;
 
-    /// `scroll` only: the sender's CSS pixels, DOM signs (positive dy scrolls
-    /// down), one wheel notch = 100. The one delta on the channel — see
-    /// `shared/schemas/input/scroll.schema.json` for why that is safe.
+    /// `scroll`: the sender's CSS pixels, DOM signs (positive dy scrolls
+    /// down), one wheel notch = 100 — see `shared/schemas/input/scroll.schema.json`
+    /// for why a delta is safe here. `delta`: travel as a fraction of the
+    /// frame, positive right/down, scaled to pixels against the display at
+    /// injection (`pointerDelta.schema.json`). Unused for anything else.
     double dx = 0;
     double dy = 0;
+
+    /// `down`, `up` and `scroll`: act at the host's current cursor position
+    /// instead of moving to nx/ny first. Game mode sends this because the
+    /// cursor has been moved by deltas and the phone no longer knows where it
+    /// is — and because the positioning move would be read as a camera jump.
+    bool inPlace = false;
 };
 
 /// One parsed message from the `keys` channel (`shared/schemas/input/key.schema.json`).

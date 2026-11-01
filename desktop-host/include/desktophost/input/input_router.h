@@ -79,6 +79,7 @@ private:
     bool rateLimited(Clock::time_point now);
     void rememberPosition(const PointerMessage& message);
     ScreenPoint currentPoint() const;
+    void press(MouseButton button, bool down, int clickCount, bool inPlace);
     void reconcile(uint8_t desired);
     void releaseHeldLocked();
 
@@ -90,6 +91,12 @@ private:
     uint8_t held_ = 0;
     double nx_ = 0;
     double ny_ = 0;
+    /// True once a delta has moved the cursor away from `nx_`/`ny_`, until an
+    /// absolute sample re-anchors it. While set, every press and repair this
+    /// router makes on its own (reconcile, deadman, releaseAll) happens in
+    /// place: positioning at the stale absolute point would be the camera
+    /// jump game mode exists to avoid.
+    bool relative_ = false;
 
     bool sampleSeen_ = false;
     uint32_t newestSeq_ = 0;

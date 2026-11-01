@@ -18,6 +18,10 @@
       "minimum": -10000,
       "maximum": 10000,
       "description": "Vertical scroll, same basis as dx: positive scrolls down (content moves up), as DOM deltaY does. Each host maps this to its native unit -- pixel scroll events on macOS, WHEEL_DELTA (120 per notch) on Windows."
+    },
+    "inPlace": {
+      "type": "boolean",
+      "description": "Scroll wherever the host cursor already is, without the positioning move. Game mode, same reason as pointerButton's `inPlace`: the wheel is a weapon switch, and the move that would precede it is a camera jump."
     }
   },
   "required": ["type", "dx", "dy"]

@@ -35,12 +35,30 @@ export type PointerIntent =
       buttons: number
     }
   | {
+      /**
+       * Game mode's move: travel, not position, as fractions of the frame.
+       * What a physical mouse reports and what a game that re-centres its
+       * cursor can read. Deltas commute, so the sender sums them per frame and
+       * the host applies them in any order (pointerDelta.schema.json).
+       */
+      kind: 'delta'
+      dx: number
+      dy: number
+      buttons: number
+    }
+  | {
       kind: 'down' | 'up'
       point: NormalisedPoint
       buttons: number
       button: PointerButton
       /** 1 single, 2 double, 3 triple. */
       clickCount: number
+      /**
+       * Press where the host cursor already is rather than at `point`. Game
+       * mode: the cursor has been moved by deltas, so `point` is only the
+       * phone's last guess, and the positioning move would be a camera jump.
+       */
+      inPlace?: boolean
     }
   | {
       kind: 'scroll'
@@ -48,15 +66,18 @@ export type PointerIntent =
       buttons: number
       /**
        * CSS pixels, DOM WheelEvent signs (positive dy scrolls down), with a
-       * wheel notch normalised to 100 — see {@link wheelDelta}. The only
-       * delta on the wire: scrolling has no absolute state to send instead.
+       * wheel notch normalised to 100 — see {@link wheelDelta}. A delta on
+       * the wire: scrolling has no absolute state to send instead.
        */
       dx: number
       dy: number
+      /** Scroll where the host cursor already is. Game mode, as on `down`. */
+      inPlace?: boolean
     }
 
 const WIRE_TYPE = {
   move: 'pointerMove',
+  delta: 'pointerDelta',
   down: 'pointerDown',
   up: 'pointerUp',
   scroll: 'scroll',
@@ -95,22 +116,39 @@ function round(value: number): number {
   return Math.round(value * 1e4) / 1e4
 }
 
+/** The schema's bound on one delta: ten frames of travel in one packet. */
+const MAX_DELTA = 10
+
+function clampDelta(value: number): number {
+  return Math.max(-MAX_DELTA, Math.min(MAX_DELTA, round(value)))
+}
+
 export function encodePointerMessage(intent: PointerIntent, seq: number, at: number): string {
   const message: Record<string, unknown> = {
     type: WIRE_TYPE[intent.kind],
     seq,
     t: at,
-    nx: round(intent.point.nx),
-    ny: round(intent.point.ny),
-    buttons: intent.buttons,
   }
+
+  if (intent.kind === 'delta') {
+    message.dx = clampDelta(intent.dx)
+    message.dy = clampDelta(intent.dy)
+    message.buttons = intent.buttons
+    return JSON.stringify(message)
+  }
+
+  message.nx = round(intent.point.nx)
+  message.ny = round(intent.point.ny)
+  message.buttons = intent.buttons
 
   if (intent.kind === 'down' || intent.kind === 'up') {
     message.button = intent.button
     message.clickCount = intent.clickCount
+    if (intent.inPlace) message.inPlace = true
   } else if (intent.kind === 'scroll') {
     message.dx = clampScroll(intent.dx)
     message.dy = clampScroll(intent.dy)
+    if (intent.inPlace) message.inPlace = true
   }
 
   return JSON.stringify(message)

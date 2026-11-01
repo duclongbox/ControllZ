@@ -73,6 +73,13 @@ public:
     /// held down.
     virtual void move(ScreenPoint point, uint8_t heldButtons) = 0;
 
+    /// Moves the cursor by `dx`/`dy` pixels from wherever it is, as a physical
+    /// mouse does. Game mode's move: a 3D game hides and re-centres the cursor
+    /// every frame and reads the mouse as relative motion, so an absolute
+    /// `move` is read as a jump from the centre and the camera spins. Backends
+    /// keep the sub-pixel remainder, so a slow swipe is not rounded to nothing.
+    virtual void moveBy(double dx, double dy, uint8_t heldButtons) = 0;
+
     /// `clickCount` is 1 single, 2 double, 3 triple, and is passed through from
     /// the phone. On macOS it becomes `kCGMouseEventClickState`: two plain
     /// clicks in a row do not register as a double-click in most apps, so
@@ -81,12 +88,22 @@ public:
 
     virtual void buttonUp(ScreenPoint point, MouseButton button, int clickCount) = 0;
 
+    /// A press or release at the cursor's *current* position, wherever the
+    /// relative moves have left it. `buttonDown`/`buttonUp` position the
+    /// cursor first, which in game mode is the camera jump this exists to
+    /// avoid.
+    virtual void pressInPlace(MouseButton button, bool down, int clickCount) = 0;
+
     /// Scrolls whatever is under `point`. `dx`/`dy` are the wire's units —
     /// sender CSS pixels, DOM signs (positive dy scrolls down), one wheel
     /// notch = 100 — and each backend converts to its own. Backends keep the
     /// sub-unit remainder, so a touchpad's stream of small deltas is not
     /// rounded away one event at a time.
     virtual void scroll(ScreenPoint point, double dx, double dy) = 0;
+
+    /// `scroll` without the positioning move: the wheel lands wherever the
+    /// cursor already is. Game mode's weapon switch.
+    virtual void scrollInPlace(double dx, double dy) = 0;
 
     /// Presses or releases the key at DOM `code`'s physical position (see
     /// key_codes.h). Returns false for a key this host has no equivalent for,

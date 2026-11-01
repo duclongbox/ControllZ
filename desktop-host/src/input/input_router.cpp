@@ -44,6 +44,16 @@ ScreenPoint InputRouter::currentPoint() const {
     return mapToScreen(nx_, ny_, injector_->bounds());
 }
 
+void InputRouter::press(MouseButton button, bool down, int clickCount, bool inPlace) {
+    if (inPlace) {
+        injector_->pressInPlace(button, down, clickCount);
+    } else if (down) {
+        injector_->buttonDown(currentPoint(), button, clickCount);
+    } else {
+        injector_->buttonUp(currentPoint(), button, clickCount);
+    }
+}
+
 void InputRouter::reconcile(uint8_t desired) {
     const uint8_t disagreement = static_cast<uint8_t>((held_ ^ desired) & kMaskAll);
     if (disagreement == 0) {
@@ -60,12 +70,11 @@ void InputRouter::reconcile(uint8_t desired) {
         if ((disagreement & bit) == 0) {
             continue;
         }
-        const ScreenPoint point = currentPoint();
         if ((desired & bit) != 0) {
-            injector_->buttonDown(point, button, 1);
+            press(button, true, 1, relative_);
             held_ = static_cast<uint8_t>(held_ | bit);
         } else {
-            injector_->buttonUp(point, button, 1);
+            press(button, false, 1, relative_);
             held_ = static_cast<uint8_t>(held_ & ~bit);
         }
         ++stats_.repairedButtons;
@@ -80,7 +89,7 @@ void InputRouter::releaseHeldLocked() {
     for (MouseButton button : buttons) {
         const uint8_t bit = buttonMask(button);
         if ((held_ & bit) != 0) {
-            injector_->buttonUp(currentPoint(), button, 1);
+            press(button, false, 1, relative_);
             held_ = static_cast<uint8_t>(held_ & ~bit);
         }
     }
@@ -102,15 +111,44 @@ void InputRouter::handleMessage(std::string_view json, Clock::time_point now) {
 
     const PointerMessage& message = *parsed;
 
+    if (message.action == PointerAction::delta) {
+        // Deltas commute, so they are not gated against each other: two
+        // swapped on the wire add up to the same travel. They are gated
+        // against absolute samples, which they do not commute with — a delta
+        // from before a mode switch, arriving after the move that re-anchored
+        // the cursor, would nudge it off the point the phone just chose.
+        // Deltas never advance that gate themselves.
+        if (sampleSeen_ && message.seq <= newestSeq_) {
+            ++stats_.staleDropped;
+            return;
+        }
+        const DisplayBounds bounds = injector_->bounds();
+        reconcile(message.buttons);
+        relative_ = true;
+        injector_->moveBy(deltaToPixels(message.dx, bounds.width),
+                          deltaToPixels(message.dy, bounds.height), held_);
+        ++stats_.applied;
+        return;
+    }
+
     if (message.action == PointerAction::scroll) {
         // Never stale-dropped. A scroll's delta is distance the user asked
         // for, and deltas commute, so one arriving late is applied late rather
         // than lost. Its *position* is a sample like a move's, though, and
         // only the newest may move the cursor — the same gate a move takes.
+        // An in-place scroll has no position to apply: the wheel lands
+        // wherever the deltas have left the cursor.
+        if (message.inPlace) {
+            reconcile(message.buttons);
+            injector_->scrollInPlace(message.dx, message.dy);
+            ++stats_.applied;
+            return;
+        }
         if (!sampleSeen_ || message.seq > newestSeq_) {
             sampleSeen_ = true;
             newestSeq_ = message.seq;
             rememberPosition(message);
+            relative_ = false;
             reconcile(message.buttons);
             injector_->move(currentPoint(), held_);
         } else {
@@ -134,6 +172,8 @@ void InputRouter::handleMessage(std::string_view json, Clock::time_point now) {
         newestSeq_ = message.seq;
 
         rememberPosition(message);
+        // An absolute move re-anchors the cursor, whatever deltas came before.
+        relative_ = false;
         reconcile(message.buttons);
         injector_->move(currentPoint(), held_);
         ++stats_.applied;
@@ -159,17 +199,25 @@ void InputRouter::handleMessage(std::string_view json, Clock::time_point now) {
         newestSeq_ = message.seq;
     }
 
-    rememberPosition(message);
+    // An in-place transition leaves the cursor where the deltas put it and
+    // carries a position only because the schema requires one; a positioned
+    // transition is an absolute sample like a move and re-anchors.
+    if (!message.inPlace) {
+        rememberPosition(message);
+        relative_ = false;
+    }
     const uint8_t bit = buttonMask(message.button);
+    const bool inPlace = message.inPlace || relative_;
 
     if (message.action == PointerAction::down) {
         if ((held_ & bit) == 0) {
-            injector_->buttonDown(currentPoint(), message.button, message.clickCount);
+            press(message.button, true, message.clickCount, inPlace);
             held_ = static_cast<uint8_t>(held_ | bit);
-        } else {
+        } else if (!inPlace) {
             // A duplicate press. Moving rather than clicking again is the safe
             // reading: a phantom second click is a destructive edit in a text
-            // editor, where a missed one is a tap the user repeats.
+            // editor, where a missed one is a tap the user repeats. In place
+            // there is nowhere to move to, and nothing to do.
             injector_->move(currentPoint(), held_);
         }
     } else {
@@ -177,11 +225,11 @@ void InputRouter::handleMessage(std::string_view json, Clock::time_point now) {
             // An orphan release: the press was lost or dropped as stale. The
             // user did click, so deliver one rather than nothing — the whole
             // gesture reduces to a click at the release position.
-            injector_->buttonDown(currentPoint(), message.button, message.clickCount);
+            press(message.button, true, message.clickCount, inPlace);
             held_ = static_cast<uint8_t>(held_ | bit);
             ++stats_.synthesisedPresses;
         }
-        injector_->buttonUp(currentPoint(), message.button, message.clickCount);
+        press(message.button, false, message.clickCount, inPlace);
         held_ = static_cast<uint8_t>(held_ & ~bit);
     }
 
@@ -211,6 +259,7 @@ void InputRouter::releaseAll() {
     // like a flood of stale samples against the old numbers.
     sampleSeen_ = false;
     newestSeq_ = 0;
+    relative_ = false;
     transitionSeen_.fill(false);
     transitionSeq_.fill(0);
     lastMessageAt_ = {};

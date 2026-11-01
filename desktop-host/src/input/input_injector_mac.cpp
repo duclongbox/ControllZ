@@ -20,6 +20,7 @@
 #include <string_view>
 
 #include "desktophost/input/key_codes.h"
+#include "desktophost/input/pointer_mapping.h"
 
 namespace desktophost {
 namespace {
@@ -181,8 +182,35 @@ public:
         post(moveEventFor(heldButtons), point, toCgButton(dragging), heldButtons == 0 ? 0 : 1);
     }
 
+    void moveBy(double dx, double dy, uint8_t heldButtons) override {
+        const int32_t px = takeWholePixels(pendingMoveX_, dx);
+        const int32_t py = takeWholePixels(pendingMoveY_, dy);
+        if (px == 0 && py == 0) {
+            return;
+        }
+        MouseButton dragging = MouseButton::left;
+        if ((heldButtons & kMaskRight) != 0) dragging = MouseButton::right;
+        else if ((heldButtons & kMaskMiddle) != 0) dragging = MouseButton::middle;
+
+        // A relative move on macOS is still an event at a location, so the
+        // location is the cursor's current one plus the delta. What a game
+        // reads, though, is the delta fields: a locked (CGAssociateMouse…
+        // disabled) cursor does not move, and kCGMouseEventDeltaX/Y are the
+        // only part of the event that carries the motion.
+        const CGPoint current = cursorLocation();
+        const ScreenPoint point{current.x + px, current.y + py};
+        post(moveEventFor(heldButtons), point, toCgButton(dragging), heldButtons == 0 ? 0 : 1,
+             px, py);
+    }
+
     void buttonDown(ScreenPoint point, MouseButton button, int clickCount) override {
         post(downEventFor(button), point, toCgButton(button), clickCount);
+    }
+
+    void pressInPlace(MouseButton button, bool down, int clickCount) override {
+        const CGPoint current = cursorLocation();
+        post(down ? downEventFor(button) : upEventFor(button), ScreenPoint{current.x, current.y},
+             toCgButton(button), clickCount);
     }
 
     void buttonUp(ScreenPoint point, MouseButton button, int clickCount) override {
@@ -190,6 +218,15 @@ public:
     }
 
     void scroll(ScreenPoint point, double dx, double dy) override {
+        scrollAt(point, dx, dy);
+    }
+
+    void scrollInPlace(double dx, double dy) override {
+        const CGPoint current = cursorLocation();
+        scrollAt(ScreenPoint{current.x, current.y}, dx, dy);
+    }
+
+    void scrollAt(ScreenPoint point, double dx, double dy) {
         // Pixel units, which are what a trackpad produces and what apps scroll
         // smoothly by. CoreGraphics' signs are the opposite of the DOM's on
         // both axes: wheel 1 positive scrolls up, wheel 2 positive scrolls
@@ -352,11 +389,28 @@ private:
         IOHIDSetModifierLockState(hidSystem_, kIOHIDCapsLockState, !locked);
     }
 
-    void post(CGEventType type, ScreenPoint point, CGMouseButton button, int clickState) const {
+    /// Where the cursor is right now, in the same global space as
+    /// DisplayBounds. The origin event is the documented way to read it.
+    static CGPoint cursorLocation() {
+        CGEventRef probe = CGEventCreate(nullptr);
+        if (probe == nullptr) {
+            return CGPointMake(0, 0);
+        }
+        const CGPoint location = CGEventGetLocation(probe);
+        CFRelease(probe);
+        return location;
+    }
+
+    void post(CGEventType type, ScreenPoint point, CGMouseButton button, int clickState,
+              int32_t deltaX = 0, int32_t deltaY = 0) const {
         CGEventRef event =
             CGEventCreateMouseEvent(nullptr, type, CGPointMake(point.x, point.y), button);
         if (event == nullptr) {
             return;
+        }
+        if (deltaX != 0 || deltaY != 0) {
+            CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, deltaX);
+            CGEventSetIntegerValueField(event, kCGMouseEventDeltaY, deltaY);
         }
         // The double-click carrier. Two independent clicks at the same spot are
         // two single clicks to every app that asks; it is this field, not the
@@ -378,6 +432,9 @@ private:
     // InputRouter, under its lock.
     double pendingX_ = 0;
     double pendingY_ = 0;
+    // Sub-pixel remainder of relative moves, same rule.
+    double pendingMoveX_ = 0;
+    double pendingMoveY_ = 0;
     // NX_DEVICE* bits of the modifiers the phone holds. Atomic because the
     // keys channel writes it under KeyboardRouter's lock while pointer events
     // read it under InputRouter's — two different threads.

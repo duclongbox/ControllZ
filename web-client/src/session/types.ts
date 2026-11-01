@@ -31,9 +31,18 @@ export type Quality = 'nominal' | 'degraded'
 export const QUALITY_PRIORITIES = ['auto', 'smooth', 'sharp'] as const
 export type QualityPriority = (typeof QUALITY_PRIORITIES)[number]
 
-/** Pointer interaction model on the stage. */
-export const POINTER_MODES = ['trackpad', 'direct'] as const
+/**
+ * Pointer interaction model on the stage. `trackpad` and `direct` send
+ * absolute positions; `game` sends deltas, like a physical mouse, for apps
+ * that hide and re-centre the cursor and read relative motion (3D games).
+ */
+export const POINTER_MODES = ['trackpad', 'direct', 'game'] as const
 export type PointerMode = (typeof POINTER_MODES)[number]
+export const POINTER_MODE_LABELS: Record<PointerMode, string> = {
+  trackpad: 'Trackpad',
+  direct: 'Direct',
+  game: 'Game',
+}
 
 /**
  * Whether Command and Control trade places on the way to the desktop.

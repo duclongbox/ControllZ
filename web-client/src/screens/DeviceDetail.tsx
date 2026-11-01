@@ -8,6 +8,7 @@ import { ListGroup, ListRow } from '../components/List'
 import { NavBar, Overline, Screen } from '../components/Screen'
 import { StatusPill } from '../components/StatusPill'
 import { formatRelative } from '../lib/format'
+import { POINTER_MODES, POINTER_MODE_LABELS } from '../session/types'
 import { forgetDevice, renameDevice, useDevices } from '../store/devices'
 import { setPref, usePrefs } from '../store/prefs'
 import { Devices } from './Devices'
@@ -102,9 +103,12 @@ export function DeviceDetail() {
            * buttons that would do nothing. */}
           <ListRow
             label="Pointer mode"
-            value={prefs.pointerMode === 'direct' ? 'Direct' : 'Trackpad'}
+            value={POINTER_MODE_LABELS[prefs.pointerMode]}
             onClick={() =>
-              setPref('pointerMode', prefs.pointerMode === 'direct' ? 'trackpad' : 'direct')
+              setPref(
+                'pointerMode',
+                POINTER_MODES[(POINTER_MODES.indexOf(prefs.pointerMode) + 1) % POINTER_MODES.length],
+              )
             }
           />
           <ListRow label="Display" value={device.displays[0]?.name ?? 'Chosen by the desktop'} />

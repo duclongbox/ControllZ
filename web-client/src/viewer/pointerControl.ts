@@ -1,15 +1,24 @@
 /* Touch gestures → pointer intents.
  *
- * THE PHONE OWNS THE CURSOR. Both modes send absolute normalised positions, so
- * every packet stays self-contained and the host accumulates nothing — the same
- * reason coordinates are normalised in the first place (docs/ui-spec.md §4).
- * Trackpad mode accumulates finger deltas into a cursor *here*, where the state
- * is safe, rather than sending deltas the host would have to add up across a
- * channel that loses and reorders them.
+ * THE PHONE OWNS THE CURSOR. Trackpad and direct mode send absolute normalised
+ * positions, so every packet stays self-contained and the host accumulates
+ * nothing — the same reason coordinates are normalised in the first place
+ * (docs/ui-spec.md §4). Trackpad mode accumulates finger deltas into a cursor
+ * *here*, where the state is safe, rather than sending deltas the host would
+ * have to add up across a channel that loses and reorders them.
  *
  * The cost of that choice, worth writing down: the desktop's real cursor can be
  * moved by the person sitting at it, and this one will not know. Cursor
  * feedback from the host is deferred.
+ *
+ * GAME MODE GIVES THE CURSOR AWAY. A 3D game hides and re-centres the cursor
+ * every frame and reads the mouse as relative motion, so an absolute position
+ * is a camera jump on every frame. Game mode sends travel instead — what a
+ * physical mouse reports — and clicks "in place", wherever the host cursor
+ * is. Deltas are safe on the channel for the same reason scrolls are: they
+ * commute, and a lost one is a few pixels of camera travel. The phone's own
+ * cursor is then only a guess, which is why leaving game mode re-anchors the
+ * host with one absolute move.
  *
  * Pure and framework-free on purpose. Every rule below is a judgement call
  * about what a touch means, and they are all testable without a DOM. */
@@ -34,6 +43,13 @@ export interface StagePointerSample {
    * reads it; a finger has no buttons to report.
    */
   buttons?: number
+  /**
+   * `event.movementX/Y` in frame fractions: how far the mouse travelled since
+   * its last event, which is the only motion a mouse under Pointer Lock
+   * reports (its position freezes). Game mode reads it; absent, game mode
+   * falls back to the difference between frame positions.
+   */
+  movement?: { dx: number; dy: number }
 }
 
 /** One wheel event from the stage, delta already in wire pixels. */
@@ -120,6 +136,8 @@ export class PointerControl {
     count: number
     button: PointerButton
   } | null = null
+  /** Game mode, mouse: the previous frame position, for events without `movement`. */
+  private lastMouseFrame: NormalisedPoint | null = null
 
   constructor(options: PointerControlOptions = {}) {
     this.options = { ...DEFAULTS, ...options }
@@ -141,8 +159,19 @@ export class PointerControl {
    */
   setMode(mode: PointerMode): PointerIntent[] {
     if (mode === this.mode) return []
+    // Released under the old mode's rules: a button held in game mode is let
+    // go in place, where the host cursor actually is.
+    const intents = this.abandon()
+    const leavingGame = this.mode === 'game'
     this.mode = mode
-    return this.abandon()
+    this.lastMouseFrame = null
+    if (leavingGame) {
+      // The host cursor is wherever the deltas left it and this one is a stale
+      // guess. One absolute move puts them back in step, and the host drops
+      // any delta still in flight from before it.
+      intents.push({ kind: 'move', point: this.cursor, buttons: this.buttons })
+    }
+    return intents
   }
 
   /** Release everything. For unmount, session end, or losing the channel. */
@@ -156,9 +185,17 @@ export class PointerControl {
 
   handle(sample: StagePointerSample): PointerIntent[] {
     if (!sample.frame) return []
-    // A mouse ignores the pointer mode. Trackpad and direct are two answers to
-    // "what does a finger mean"; a mouse already says what it means, and
-    // running it through tap detection is what made slow clicks vanish.
+    // Game mode is the one mode a mouse does follow: it changes what a move
+    // *is*, not what a finger means.
+    if (this.mode === 'game') {
+      return sample.pointerType === 'mouse'
+        ? this.handleGameMouse(sample)
+        : this.handleGameTouch(sample)
+    }
+    // Otherwise a mouse ignores the pointer mode. Trackpad and direct are two
+    // answers to "what does a finger mean"; a mouse already says what it
+    // means, and running it through tap detection is what made slow clicks
+    // vanish.
     if (sample.pointerType === 'mouse') return this.handleMouse(sample)
     return this.mode === 'direct' ? this.handleDirect(sample) : this.handleTrackpad(sample)
   }
@@ -167,10 +204,24 @@ export class PointerControl {
    * A wheel or touchpad scroll, at the pointer. Scroll only comes from a mouse
    * or touchpad, which has a real position, so the cursor goes there whatever
    * the touch mode — the desktop scrolls whatever is under its cursor, and
-   * that has to be what is under the user's.
+   * that has to be what is under the user's. Except in game mode, where the
+   * wheel is a weapon switch and the position is a locked mouse's frozen one:
+   * it scrolls in place.
    */
   handleWheel(sample: StageWheelSample): PointerIntent[] {
     if (!sample.frame || (sample.dx === 0 && sample.dy === 0)) return []
+    if (this.mode === 'game') {
+      return [
+        {
+          kind: 'scroll',
+          point: this.cursor,
+          buttons: this.buttons,
+          dx: sample.dx,
+          dy: sample.dy,
+          inPlace: true,
+        },
+      ]
+    }
     this.cursor = clampPoint(sample.frame)
     return [
       { kind: 'scroll', point: this.cursor, buttons: this.buttons, dx: sample.dx, dy: sample.dy },
@@ -226,6 +277,9 @@ export class PointerControl {
     at = 0,
   ): PointerIntent[] {
     const intents: PointerIntent[] = []
+    // In game mode `point` is only this side's guess; the host presses where
+    // its cursor actually is.
+    const inPlace = this.mode === 'game' ? { inPlace: true } : {}
     for (const button of BUTTON_ORDER) {
       const bit = BUTTON_MASK[button]
       if ((this.buttons & bit) === 0 || (desired & bit) !== 0) continue
@@ -236,6 +290,7 @@ export class PointerControl {
         buttons: this.buttons,
         button,
         clickCount: this.mouseClickCounts[button],
+        ...inPlace,
       })
       this.mouseClickCounts[button] = 1
     }
@@ -245,7 +300,7 @@ export class PointerControl {
       this.buttons |= bit
       const clickCount = countClicks ? this.mouseChainCount(at, point, button) : 1
       this.mouseClickCounts[button] = clickCount
-      intents.push({ kind: 'down', point, buttons: this.buttons, button, clickCount })
+      intents.push({ kind: 'down', point, buttons: this.buttons, button, clickCount, ...inPlace })
     }
     return intents
   }
@@ -396,6 +451,101 @@ export class PointerControl {
         this.gesture = null
         return this.buttons === 0 ? [] : this.abandon()
     }
+  }
+
+  // -- game: the finger or mouse is a mouse -----------------------------------
+
+  /**
+   * A finger slides the camera and a tap clicks in place. The same gesture
+   * grammar as trackpad mode, with travel sent as travel: there is no cursor
+   * here to push, because the game has taken it.
+   */
+  private handleGameTouch(sample: StagePointerSample): PointerIntent[] {
+    const frame = sample.frame as FramePoint
+
+    switch (sample.kind) {
+      case 'down':
+        // Silent, as in trackpad mode: whether this is a click is not known
+        // until the finger lifts.
+        this.gesture = this.begin(sample, frame, false)
+        return []
+
+      case 'move': {
+        const gesture = this.gesture
+        if (!gesture) return []
+        const dx = (frame.nx - gesture.lastFrame.nx) * this.options.sensitivity
+        const dy = (frame.ny - gesture.lastFrame.ny) * this.options.sensitivity
+        gesture.lastFrame = frame
+        gesture.travel += Math.hypot(dx, dy)
+        if (dx === 0 && dy === 0) return []
+        return [{ kind: 'delta', dx, dy, buttons: this.buttons }]
+      }
+
+      case 'up': {
+        const gesture = this.gesture
+        this.gesture = null
+        if (!gesture) return []
+
+        const held = sample.at - gesture.startedAt
+        if (gesture.travel > this.options.tapSlop || held > this.options.tapMaxMs) return []
+
+        // Chained by time alone in effect: the point never changes here.
+        const clickCount = this.chainCount(sample.at, this.cursor)
+        this.lastTap = { at: sample.at, point: this.cursor, count: clickCount }
+        return [
+          {
+            kind: 'down',
+            point: this.cursor,
+            buttons: this.buttons | BUTTON_MASK.left,
+            button: 'left',
+            clickCount,
+            inPlace: true,
+          },
+          {
+            kind: 'up',
+            point: this.cursor,
+            buttons: this.buttons,
+            button: 'left',
+            clickCount,
+            inPlace: true,
+          },
+        ]
+      }
+
+      case 'cancel':
+        this.gesture = null
+        return this.buttons === 0 ? [] : this.abandon()
+    }
+  }
+
+  /**
+   * A mouse, ideally under Pointer Lock: its travel is the camera and its
+   * buttons are themselves, pressed in place. No letterbox rules — a locked
+   * mouse has no position to be on a bar with, and an unlocked one in game
+   * mode is a mouse the user is about to lock by clicking.
+   */
+  private handleGameMouse(sample: StagePointerSample): PointerIntent[] {
+    const frame = sample.frame as FramePoint
+    const intents: PointerIntent[] = []
+
+    // The browser reports travel directly on every mouse event. Without it
+    // (an older browser, a synthetic event), the difference between frame
+    // positions is the same thing until the mouse reaches the window edge.
+    let movement = sample.movement
+    if (!movement && this.lastMouseFrame && sample.kind === 'move') {
+      movement = { dx: frame.nx - this.lastMouseFrame.nx, dy: frame.ny - this.lastMouseFrame.ny }
+    }
+    this.lastMouseFrame = frame
+    if (movement && (movement.dx !== 0 || movement.dy !== 0)) {
+      intents.push({ kind: 'delta', dx: movement.dx, dy: movement.dy, buttons: this.buttons })
+    }
+
+    // `cancel` has no trustworthy mask, as in handleMouse.
+    const desired = sample.kind === 'cancel' ? 0 : (sample.buttons ?? 0)
+    if (desired !== this.buttons) {
+      intents.push(...this.transitionTo(desired, this.cursor, true, sample.at))
+    }
+    return intents
   }
 
   // -- shared ---------------------------------------------------------------

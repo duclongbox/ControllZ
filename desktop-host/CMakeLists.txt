@@ -59,6 +59,7 @@ include(cmake/Dependencies.cmake)
 # below, so this list stays the definition of what `core/` is allowed to be.
 add_library(desktophost_core STATIC
     src/version.cpp
+    src/shutdown_gate.cpp
     src/capture/test_tone.cpp
     src/encode/annex_b.cpp
     # Opus is pure CPU and the same on every platform; see

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { PointerMode, QualityPriority, ShortcutModifiers } from '../session/types'
-import { SHORTCUT_MODIFIER_MODES } from '../session/types'
+import { POINTER_MODES, SHORTCUT_MODIFIER_MODES } from '../session/types'
 
 /* Local preferences.
  *
@@ -81,10 +81,9 @@ function read(): Prefs {
     hideChromeAfterMs: HIDE_DELAYS.some((d) => d.value === partial.hideChromeAfterMs)
       ? (partial.hideChromeAfterMs as number)
       : DEFAULTS.hideChromeAfterMs,
-    pointerMode:
-      partial.pointerMode === 'direct' || partial.pointerMode === 'trackpad'
-        ? partial.pointerMode
-        : DEFAULTS.pointerMode,
+    pointerMode: (POINTER_MODES as readonly unknown[]).includes(partial.pointerMode)
+      ? (partial.pointerMode as PointerMode)
+      : DEFAULTS.pointerMode,
     qualityPriority:
       partial.qualityPriority === 'smooth' ||
       partial.qualityPriority === 'sharp' ||

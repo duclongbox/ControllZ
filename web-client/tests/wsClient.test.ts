@@ -718,6 +718,44 @@ describe('wsClient input channel', () => {
     client.dispose()
   })
 
+  it('sums game-mode deltas within a frame and sends them without a position', async () => {
+    const { client, peer } = await streaming()
+    const channel = peer.offerDataChannel()
+
+    // A locked mouse reports at its polling rate; each report is travel.
+    client.sendPointer({ kind: 'delta', dx: 0.01, dy: 0, buttons: 0 })
+    client.sendPointer({ kind: 'delta', dx: 0.02, dy: -0.005, buttons: 0 })
+    client.sendPointer({ kind: 'delta', dx: -0.01, dy: 0, buttons: 2 })
+
+    expect(channel.sent).toHaveLength(0)
+    await vi.waitFor(() => expect(channel.sent).toHaveLength(1))
+    expect(channel.messages[0]).toEqual({
+      type: 'pointerDelta',
+      seq: 1,
+      t: expect.any(Number),
+      dx: 0.02,
+      dy: -0.005,
+      buttons: 2,
+    })
+    expect(channel.messages[0]).not.toHaveProperty('nx')
+    client.dispose()
+  })
+
+  it('sends a waiting delta before an in-place click, so the host does not drop it as stale', async () => {
+    const { client, peer } = await streaming()
+    const channel = peer.offerDataChannel()
+
+    client.sendPointer({ kind: 'delta', dx: 0.01, dy: 0, buttons: 0 })
+    client.sendPointer({ ...click(0.5, 0.5)[0], inPlace: true })
+
+    expect(channel.messages.map((m) => m.type)).toEqual(['pointerDelta', 'pointerDown'])
+    expect(channel.messages[1]).toMatchObject({ inPlace: true, seq: 2 })
+    // A plain click carries no flag at all.
+    client.sendPointer(click(0.5, 0.5)[1])
+    expect(channel.messages[2]).not.toHaveProperty('inPlace')
+    client.dispose()
+  })
+
   it('sends keys on their own channel, not the pointer one', async () => {
     const { client, peer } = await streaming()
     const input = peer.offerDataChannel('input')
